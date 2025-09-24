@@ -1,0 +1,361 @@
+#define enA 9  // Enable pin for Motor A (right motor), PWM compatible, EN for motor driver
+#define in1 8  // Direction control pin 1 for Motor A, IN for motor driver
+#define in2 7  // Direction control pin 2 for Motor A, IN for motor driver 
+
+#define enB 6  // Enable pin for Motor B (left motor), PWM compatible, EN for motor driver
+#define in3 5  // Direction control pin 1 for Motor B, IN for motor driver
+#define in4 4  // Direction control pin 2 for Motor B, IN for motor driver
+
+// Note:
+// in1 HIGH and in2 LOW --> FORWARDS
+// in1 LOW and in2 HIGH --> BACKWARDS
+// in1 LOW and in2 LOW --> STOP
+
+// *** Code to control the robot through serial monitor *** // 
+
+void setup() {
+  // Set motor control pins as outputs
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // Initialize serial communication
+  Serial.begin(9600);
+  Serial.println("Robot ready! Use arrow keys:");
+  Serial.println("w = forward, s = backward, a = left, d = right, x = stop");
+}
+
+// Low-level motor control function
+void controlMotor(int motorA_speed, int motorB_speed) {
+  // Motor A (right motor) control
+  // if motor speed is positive, move FORWARD
+  if (motorA_speed >= 0) {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+  // if motor speed is negative, move BACKWARDS
+  } else {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    // change negative value to positive 
+    motorA_speed = -motorA_speed;
+  }
+  // write the speed to the motor, constrained within the range of 0-255
+  analogWrite(enA, constrain(motorA_speed, 0, 255));
+  
+  // Motor B (left motor) control
+  if (motorB_speed >= 0) {
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+  } else {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    motorB_speed = -motorB_speed;
+  }
+  analogWrite(enB, constrain(motorB_speed, 0, 255));
+}
+
+// encapsulated functions for each direction
+
+// Drive the robot forwards
+void driveForward(int speed) {
+  controlMotor(speed, speed);
+}
+
+// Drive the robot backwards
+void driveBackward(int speed) {
+  controlMotor(-speed, -speed);
+}
+
+// Turn the robot left while driving forward
+void turnLeft(int speed) {
+  controlMotor(speed, speed / 2);  // Right motor full, left motor half
+}
+
+// Turn the robot right while driving forward
+void turnRight(int speed) {
+  controlMotor(speed / 2, speed);  // Right motor half, left motor full
+}
+
+// Stop the robot
+void stopRobot() {
+  controlMotor(0, 0);
+}
+
+// loop this to keep checking
+
+void loop() {
+  // Check if data is available from Serial Monitor
+  if (Serial.available() > 0) { // is there any data available? eg. from keyboard
+    char command = Serial.read();
+    
+    switch (command) {
+      case 'w':  // Forward (up arrow key equivalent)
+        driveForward(150);
+        Serial.println("FORWARD");
+        break;
+        
+      case 's':  // Backward (down arrow key equivalent)
+        driveBackward(150);
+        Serial.println("BACK");
+        break;
+        
+      case 'a':  // Left (left arrow key equivalent)
+        turnLeft(120);
+        Serial.println("LEFT");
+        break;
+        
+      case 'd':  // Right (right arrow key equivalent)
+        turnRight(120);
+        Serial.println("RIGHT");
+        break;
+        
+      case 'x':  // Stop
+        stopRobot();
+        Serial.println("STOP");
+        break;
+        
+      default:
+        Serial.println("Use w/s/a/d/x");
+        break;
+    }
+  }
+}
+
+// *** Code to make robot dance (without control) *** //
+
+// For one second in each direction, move FORWARD, BACKWARDS, RIGHT, LEFT
+// Keep on repeating pattern 
+
+// const int motorSpeed = 100;  
+
+// void setup() {
+//   // Set motor control pins as outputs
+//   pinMode(enA, OUTPUT);
+//   pinMode(in1, OUTPUT);
+//   pinMode(in2, OUTPUT);
+//   pinMode(enB, OUTPUT);
+//   pinMode(in3, OUTPUT);
+//   pinMode(in4, OUTPUT);
+  
+//   Serial.begin(9600); // initialize serial communication between hardware and software
+
+// }
+
+// void loop() {
+//   // Move forward for 1 second
+//   Serial.println("Moving FORWARD");
+//   moveForward();
+//   delay(1000);
+  
+//   // Stop briefly between movements
+//   stopMotors();
+//   delay(100);
+  
+//   // Move backward for 1 second
+//   Serial.println("Moving BACKWARD");
+//   moveBackward();
+//   delay(1000);
+  
+//   // Stop briefly
+//   stopMotors();
+//   delay(100);
+  
+//   // Turn right for 1 second
+//   Serial.println("Turning RIGHT");
+//   turnRight();
+//   delay(1000);
+  
+//   // Stop briefly
+//   stopMotors();
+//   delay(100);
+  
+//   // Turn left for 1 second
+//   Serial.println("Turning LEFT");
+//   turnLeft();
+//   delay(1000);
+  
+//   // Stop briefly before repeating
+//   stopMotors();
+//   delay(100);
+  
+//   Serial.println("REPEAT!!! YIPPEE!!!");
+// }
+
+// // Movement functions
+// void moveForward() {
+//   // Right motor (Motor A) forward
+//   digitalWrite(in1, HIGH);
+//   digitalWrite(in2, LOW);
+//   analogWrite(enA, motorSpeed);
+  
+//   // Left motor (Motor B) forward
+//   digitalWrite(in3, HIGH);
+//   digitalWrite(in4, LOW);
+//   analogWrite(enB, motorSpeed);
+// }
+
+// void moveBackward() {
+//   // Right motor (Motor A) backward
+//   digitalWrite(in1, LOW);
+//   digitalWrite(in2, HIGH);
+//   analogWrite(enA, motorSpeed);
+  
+//   // Left motor (Motor B) backward
+//   digitalWrite(in3, LOW);
+//   digitalWrite(in4, HIGH);
+//   analogWrite(enB, motorSpeed);
+// }
+
+// void turnRight() {
+//   // Right motor (Motor A) backward
+//   digitalWrite(in1, LOW);
+//   digitalWrite(in2, HIGH);
+//   analogWrite(enA, motorSpeed);
+  
+//   // Left motor (Motor B) forward
+//   digitalWrite(in3, HIGH);
+//   digitalWrite(in4, LOW);
+//   analogWrite(enB, motorSpeed);
+// }
+
+// void turnLeft() {
+//   // Right motor (Motor A) forward
+//   digitalWrite(in1, HIGH);
+//   digitalWrite(in2, LOW);
+//   analogWrite(enA, motorSpeed);
+  
+//   // Left motor (Motor B) backward
+//   digitalWrite(in3, LOW);
+//   digitalWrite(in4, HIGH);
+//   analogWrite(enB, motorSpeed);
+// }
+
+// void stopMotors() {
+//   // Stop both motors by setting enable pins to 0
+//   analogWrite(enA, 0);
+//   analogWrite(enB, 0);
+  
+//   // Also set direction pins to LOW for safety
+//   digitalWrite(in1, LOW);
+//   digitalWrite(in2, LOW);
+//   digitalWrite(in3, LOW);
+//   digitalWrite(in4, LOW);
+// }
+
+// *** Copied code used to test robot during Lab 03 *** // 
+
+// #define enA 9 // Enable pin for Motor A — must be a PWM-capable pin
+// #define in1 8 // Direction control pin 1 for Motor A
+// #define in2 7 // Direction control pin 2 for Motor A
+ 
+// void setup() {
+// // Set motor control pins as outputs
+// pinMode(enA, OUTPUT);
+// pinMode(in1, OUTPUT);
+// pinMode(in2, OUTPUT);
+// }
+
+// //create a function that drives motor 
+// void driveMotor(int speed) {
+//   if (speed >= 0) {
+//     digitalWrite(in1, LOW);   // Forward direction
+//     digitalWrite(in2, HIGH);
+//   } else {
+//     digitalWrite(in1, HIGH);  // Reverse direction
+//     digitalWrite(in2, LOW);
+//     speed = -speed;           // Make speed positive for PWM
+//   }
+
+// #define enA 9  // Enable pin for Motor A (right motor)
+// #define in1 8  // Direction control pin 1 for Motor A
+// #define in2 7  // Direction control pin 2 for Motor A
+
+// #define enB 6  // Enable pin for Motor B (left motor)
+// #define in3 5  // Direction control pin 1 for Motor B
+// #define in4 4  // Direction control pin 2 for Motor B
+
+// void setup() {
+//   // Set motor control pins as outputs
+//   pinMode(enA, OUTPUT);
+//   pinMode(in1, OUTPUT);
+//   pinMode(in2, OUTPUT);
+//   pinMode(enB, OUTPUT);
+//   pinMode(in3, OUTPUT);
+//   pinMode(in4, OUTPUT);
+// }
+
+// // Low-level motor control function
+// void controlMotor(int motorA_speed, int motorB_speed) {
+//   // Motor A (right motor) control
+//   if (motorA_speed >= 0) {
+//     digitalWrite(in1, LOW);
+//     digitalWrite(in2, HIGH);
+//   } else {
+//     digitalWrite(in1, HIGH);
+//     digitalWrite(in2, LOW);
+//     motorA_speed = -motorA_speed;
+//   }
+//   analogWrite(enA, constrain(motorA_speed, 0, 255));
+  
+//   // Motor B (left motor) control
+//   if (motorB_speed >= 0) {
+//     digitalWrite(in3, LOW);
+//     digitalWrite(in4, HIGH);
+//   } else {
+//     digitalWrite(in3, HIGH);
+//     digitalWrite(in4, LOW);
+//     motorB_speed = -motorB_speed;
+//   }
+//   analogWrite(enB, constrain(motorB_speed, 0, 255));
+// }
+
+// // Drive the robot forwards
+// void driveForward(int speed) {
+//   controlMotor(speed, speed);
+// }
+
+// // Drive the robot backwards
+// void driveBackward(int speed) {
+//   controlMotor(-speed, -speed);
+// }
+
+// // Turn the robot left while driving forward
+// void turnLeft(int speed) {
+//   controlMotor(speed, speed / 2);  // Right motor full, left motor half
+// }
+
+// // Turn the robot right while driving forward
+// void turnRight(int speed) {
+//   controlMotor(speed / 2, speed);  // Right motor half, left motor full
+// }
+
+// // Turn the robot in place - left turn (right wheel forward, left wheel backward)
+// void pivotLeft(int speed) {
+//   controlMotor(speed, -speed);
+// }
+
+// // Turn the robot in place - right turn (right wheel backward, left wheel forward)
+// void pivotRight(int speed) {
+//   controlMotor(-speed, speed);
+// }
+
+// // Stop the robot
+// void stopRobot() {
+//   controlMotor(0, 0);
+// }
+
+// void loop() {
+// digitalWrite(in1, LOW); // direction
+// digitalWrite(in2, HIGH); // direction
+// digitalWrite(enA, HIGH); // enable
+// }
+
+// void loop() {
+// digitalWrite(in1, LOW); // direction
+// digitalWrite(in2, HIGH); // direction
+// analogWrite(enA, 255); // max speed
+// }
+
