@@ -2,7 +2,7 @@ import processing.serial.*;
 
 // Serial communication
 Serial serialPort;
-String portName = "/dev/tty.Bluetooth-Incoming-Port"; // Your Arduino's port
+String portName = "COM8"; // Sams Arduino's port = "COM8"
 
 // GUI elements
 boolean isConnected = false;
