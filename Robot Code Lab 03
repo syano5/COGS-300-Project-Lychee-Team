@@ -33,12 +33,12 @@ void controlMotor(int motorA_speed, int motorB_speed) {
   // Motor A (right motor) control
   // if motor speed is positive, move FORWARD
   if (motorA_speed >= 0) {
-    digitalWrite(in1, HIGH);
-    digitalWrite(in2, LOW);
-  // if motor speed is negative, move BACKWARDS
-  } else {
     digitalWrite(in1, LOW);
     digitalWrite(in2, HIGH);
+  // if motor speed is negative, move BACKWARDS
+  } else {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
     // change negative value to positive 
     motorA_speed = -motorA_speed;
   }
