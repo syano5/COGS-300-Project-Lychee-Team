@@ -1,1 +1,309 @@
+import processing.serial.*;
 
+// Serial communication
+Serial serialPort;
+String portName = "/dev/tty.Bluetooth-Incoming-Port"; // Your Arduino's port
+
+// GUI elements
+boolean isConnected = false;
+String currentCommand = "STOP";
+String lastMessage = "";
+
+// Button properties
+int buttonSize = 80;
+int buttonSpacing = 100;
+
+void setup() {
+  size(600, 500);
+  
+  // List available serial ports
+  String[] ports = Serial.list();
+  printArray(ports);
+  
+  // Auto-detect Arduino port (try usbmodem ports first)
+  isConnected = false;
+  for (String port : ports) {
+    if (port.contains("usbmodem") || port.contains("usbserial")) {
+      try {
+        serialPort = new Serial(this, port, 9600);
+        portName = port;
+        isConnected = true;
+        println("Auto-connected to Arduino on port: " + portName);
+        delay(3000); // Give Arduino more time to initialize
+        
+        // Clear any initial data from Arduino
+        while (serialPort.available() > 0) {
+          serialPort.read();
+        }
+        
+        println("Arduino should be ready now!");
+        break;
+      } catch (Exception e) {
+        println("Failed to connect to " + port);
+      }
+    }
+  }
+  
+  // If auto-detection failed, try the manually specified port
+  if (!isConnected) {
+    try {
+      serialPort = new Serial(this, portName, 9600);
+      isConnected = true;
+      println("Connected to Arduino on port: " + portName);
+      delay(3000); // Give Arduino more time to initialize
+      
+      // Clear any initial data from Arduino
+      while (serialPort.available() > 0) {
+        serialPort.read();
+      }
+      
+      println("Arduino should be ready now!");
+    } catch (Exception e) {
+      println("Could not connect to Arduino. Please check the port name.");
+      println("Available ports:");
+      printArray(ports);
+      isConnected = false;
+    }
+  }
+}
+
+void draw() {
+  background(50);
+  
+  // Title
+  textAlign(CENTER);
+  fill(255);
+  textSize(24);
+  text("Arduino Robot Control", width/2, 40);
+  
+  // Connection status
+  textSize(16);
+  if (isConnected) {
+    fill(0, 255, 0);
+    text("Connected to: " + portName, width/2, 70);
+  } else {
+    fill(255, 0, 0);
+    text("Not Connected - Check port name", width/2, 70);
+  }
+  
+  // Current command display
+  fill(255);
+  textSize(18);
+  text("Current Command: " + currentCommand, width/2, 100);
+  
+  // Last message from Arduino
+  if (!lastMessage.equals("")) {
+    text("Arduino says: " + lastMessage, width/2, 125);
+  }
+  
+  // Control buttons layout
+  int centerX = width/2;
+  int centerY = height/2 + 20;
+  
+  // Forward button (W)
+  drawButton(centerX, centerY - buttonSpacing, "FORWARD", "W", color(0, 200, 0));
+  
+  // Left button (A)
+  drawButton(centerX - buttonSpacing, centerY, "LEFT", "A", color(0, 150, 200));
+  
+  // Stop button (X)
+  drawButton(centerX, centerY, "STOP", "X", color(200, 0, 0));
+  
+  // Right button (D)
+  drawButton(centerX + buttonSpacing, centerY, "RIGHT", "D", color(0, 150, 200));
+  
+  // Backward button (S)
+  drawButton(centerX, centerY + buttonSpacing, "BACKWARD", "S", color(200, 100, 0));
+  
+  // Instructions
+  fill(255);
+  textSize(14);
+  textAlign(CENTER);
+  text("Click buttons or use keyboard:", width/2, height - 100);
+  text("W=Forward, S=Backward, A=Left, D=Right, X=Stop", width/2, height - 80);
+  text("Press R to reconnect, T to test Arduino connection", width/2, height - 60);
+  text("Press SPACE to send test command", width/2, height - 40);
+  
+  // Read messages from Arduino
+  if (isConnected && serialPort.available() > 0) {
+    lastMessage = serialPort.readStringUntil('\n');
+    if (lastMessage != null) {
+      lastMessage = lastMessage.trim();
+      println("Arduino: " + lastMessage);
+    }
+  }
+}
+
+void drawButton(int x, int y, String label, String key, color buttonColor) {
+  // Check if mouse is over button
+  boolean isHovered = (mouseX > x - buttonSize/2 && mouseX < x + buttonSize/2 && 
+                       mouseY > y - buttonSize/2 && mouseY < y + buttonSize/2);
+  
+  // Draw button
+  if (isHovered) {
+    fill(red(buttonColor) + 50, green(buttonColor) + 50, blue(buttonColor) + 50);
+    stroke(255);
+    strokeWeight(3);
+  } else {
+    fill(buttonColor);
+    stroke(200);
+    strokeWeight(1);
+  }
+  
+  rect(x - buttonSize/2, y - buttonSize/2, buttonSize, buttonSize, 10);
+  
+  // Draw button text
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(12);
+  text(label, x, y - 8);
+  text("(" + key + ")", x, y + 8);
+}
+
+void mousePressed() {
+  int centerX = width/2;
+  int centerY = height/2 + 20;
+  
+  // Check which button was clicked
+  if (isButtonClicked(centerX, centerY - buttonSpacing)) {
+    sendCommand('w');
+  } else if (isButtonClicked(centerX - buttonSpacing, centerY)) {
+    sendCommand('a');
+  } else if (isButtonClicked(centerX, centerY)) {
+    sendCommand('x');
+  } else if (isButtonClicked(centerX + buttonSpacing, centerY)) {
+    sendCommand('d');
+  } else if (isButtonClicked(centerX, centerY + buttonSpacing)) {
+    sendCommand('s');
+  }
+}
+
+boolean isButtonClicked(int x, int y) {
+  return (mouseX > x - buttonSize/2 && mouseX < x + buttonSize/2 && 
+          mouseY > y - buttonSize/2 && mouseY < y + buttonSize/2);
+}
+
+void keyPressed() {
+  char command = Character.toLowerCase(key);
+  
+  switch (command) {
+    case 'w':
+    case 's':
+    case 'a':
+    case 'd':
+    case 'x':
+      sendCommand(command);
+      break;
+    case 'r':
+      // Reconnect to Arduino
+      reconnect();
+      break;
+    case 't':
+      // Test Arduino connection
+      testConnection();
+      break;
+    case ' ':
+      // Send test command
+      println("Sending test forward command...");
+      sendCommand('w');
+      delay(1000);
+      sendCommand('x');
+      break;
+  }
+}
+
+void sendCommand(char command) {
+  if (!isConnected) {
+    println("Not connected to Arduino!");
+    return;
+  }
+  
+  try {
+    // Send the command
+    serialPort.write(command);
+    
+    // Force send immediately
+    //serialPort.flush(); // Uncomment if available in your Processing version
+    
+    // Update current command display
+    switch (command) {
+      case 'w':
+        currentCommand = "FORWARD";
+        break;
+      case 's':
+        currentCommand = "BACKWARD";
+        break;
+      case 'a':
+        currentCommand = "LEFT";
+        break;
+      case 'd':
+        currentCommand = "RIGHT";
+        break;
+      case 'x':
+        currentCommand = "STOP";
+        break;
+    }
+    
+    println("Sent command: '" + command + "' to Arduino");
+    
+    // Add a small delay to ensure command is processed
+    delay(10);
+    
+  } catch (Exception e) {
+    println("Error sending command: " + e.getMessage());
+    isConnected = false;
+  }
+}
+
+void reconnect() {
+  try {
+    if (serialPort != null) {
+      serialPort.stop();
+    }
+    delay(1000); // Wait before reconnecting
+    serialPort = new Serial(this, portName, 9600);
+    delay(3000); // Give Arduino time to initialize
+    
+    // Clear any initial data from Arduino
+    while (serialPort.available() > 0) {
+      serialPort.read();
+    }
+    
+    isConnected = true;
+    println("Reconnected to Arduino");
+    lastMessage = "";
+  } catch (Exception e) {
+    println("Reconnection failed: " + e.getMessage());
+    isConnected = false;
+  }
+}
+
+void testConnection() {
+  if (!isConnected) {
+    println("Not connected to test!");
+    return;
+  }
+  
+  println("Testing Arduino connection...");
+  println("Sending 'w' command...");
+  serialPort.write('w');
+  delay(100);
+  
+  // Check if Arduino responds
+  if (serialPort.available() > 0) {
+    String response = serialPort.readStringUntil('\n');
+    if (response != null) {
+      println("Arduino responded: " + response.trim());
+    }
+  } else {
+    println("No response from Arduino - check if Arduino code is running");
+  }
+}
+
+// Clean up when closing
+void exit() {
+  if (serialPort != null) {
+    serialPort.stop();
+  }
+  super.exit();
+}
