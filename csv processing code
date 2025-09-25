@@ -103,10 +103,13 @@ void setupCSVLogging() {
   // Create filename with current timestamp
   csvFilename = "robot_log_" + fileFormat.format(new Date()) + ".csv";
   
+  // Show the full path where CSV will be saved
+  println("CSV logging initialized: " + csvFilename);
+  println("Full path: " + sketchPath(csvFilename));
+  println("Sketch folder: " + sketchPath(""));
+  
   // Log session start
   logEvent("SESSION", "START", "", "Robot control session started");
-  
-  println("CSV logging initialized: " + csvFilename);
 }
 
 void logEvent(String eventType, String command, String data, String notes) {
@@ -121,7 +124,13 @@ void logEvent(String eventType, String command, String data, String notes) {
   newRow.setString("notes", notes);
   
   // Save CSV file (this creates/updates the file each time)
-  saveTable(dataTable, csvFilename);
+  try {
+    saveTable(dataTable, csvFilename);
+    println("CSV updated: " + eventType + " - " + command + " (File: " + sketchPath(csvFilename) + ")");
+  } catch (Exception e) {
+    println("ERROR saving CSV: " + e.getMessage());
+    println("Attempted path: " + sketchPath(csvFilename));
+  }
 }
 
 void draw() {
@@ -197,7 +206,7 @@ void draw() {
   text("W=Forward, S=Backward, A=Left, D=Right, X=Stop", width/2, height - 100);
   text("Press R to reconnect, T to test Arduino connection", width/2, height - 80);
   text("Press SPACE to send test command, L to toggle logging", width/2, height - 60);
-  text("Press E to export current CSV, C to clear log", width/2, height - 40);
+  text("Press E to export current CSV, C to clear log, P to print path", width/2, height - 40);
   text("CSV file saved to sketch folder: " + csvFilename, width/2, height - 20);
   
   // Read messages from Arduino
@@ -293,6 +302,10 @@ void keyPressed() {
     case 'c':
       // Clear log and start new CSV
       clearLog();
+      break;
+    case 'p':
+      // Print file path information
+      printFilePaths();
       break;
     case ' ':
       // Send test command
@@ -434,6 +447,37 @@ void clearLog() {
   logEvent("SYSTEM", "LOG_CLEARED", "", "Previous log had " + oldCount + " events. New session started.");
   
   println("Log cleared. New CSV file: " + csvFilename);
+}
+
+void printFilePaths() {
+  println("\n=== FILE PATH INFORMATION ===");
+  println("Current CSV filename: " + csvFilename);
+  println("Full path: " + sketchPath(csvFilename));
+  println("Sketch folder: " + sketchPath(""));
+  println("File exists: " + new java.io.File(sketchPath(csvFilename)).exists());
+  println("Table rows: " + dataTable.getRowCount());
+  println("Logging enabled: " + loggingEnabled);
+  
+  // List all CSV files in sketch folder
+  println("\n=== CSV FILES IN SKETCH FOLDER ===");
+  java.io.File folder = new java.io.File(sketchPath(""));
+  java.io.File[] files = folder.listFiles();
+  boolean foundCSV = false;
+  
+  if (files != null) {
+    for (java.io.File file : files) {
+      if (file.getName().toLowerCase().endsWith(".csv")) {
+        println("Found CSV: " + file.getName() + " (" + file.length() + " bytes)");
+        foundCSV = true;
+      }
+    }
+  }
+  
+  if (!foundCSV) {
+    println("No CSV files found in sketch folder!");
+    println("This might indicate a file writing permission issue.");
+  }
+  println("===============================\n");
 }
 
 // Clean up when closing
