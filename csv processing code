@@ -1,0 +1,446 @@
+import processing.serial.*;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+// Serial communication
+Serial serialPort;
+String portName = "COM8"; // Sams Arduino's port = "COM8"
+
+// GUI elements
+boolean isConnected = false;
+String currentCommand = "STOP";
+String lastMessage = "";
+
+// Button properties
+int buttonSize = 80;
+int buttonSpacing = 100;
+
+// CSV logging
+Table dataTable;
+String csvFilename;
+boolean loggingEnabled = true;
+int sessionStartTime;
+SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+SimpleDateFormat fileFormat = new SimpleDateFormat("yyyyMMdd_HHmmss");
+
+void setup() {
+  size(600, 550);
+  
+  // Initialize CSV logging
+  setupCSVLogging();
+  
+  // List available serial ports
+  String[] ports = Serial.list();
+  printArray(ports);
+  
+  // Auto-detect Arduino port (try usbmodem ports first)
+  isConnected = false;
+  for (String port : ports) {
+    if (port.contains("usbmodem") || port.contains("usbserial")) {
+      try {
+        serialPort = new Serial(this, port, 9600);
+        portName = port;
+        isConnected = true;
+        println("Auto-connected to Arduino on port: " + portName);
+        logEvent("CONNECTION", "AUTO_CONNECT", portName, "Successfully auto-connected");
+        delay(3000); // Give Arduino more time to initialize
+        
+        // Clear any initial data from Arduino
+        while (serialPort.available() > 0) {
+          serialPort.read();
+        }
+        
+        println("Arduino should be ready now!");
+        logEvent("SYSTEM", "READY", "", "Arduino initialization complete");
+        break;
+      } catch (Exception e) {
+        println("Failed to connect to " + port);
+        logEvent("CONNECTION", "FAILED", port, e.getMessage());
+      }
+    }
+  }
+  
+  // If auto-detection failed, try the manually specified port
+  if (!isConnected) {
+    try {
+      serialPort = new Serial(this, portName, 9600);
+      isConnected = true;
+      println("Connected to Arduino on port: " + portName);
+      logEvent("CONNECTION", "MANUAL_CONNECT", portName, "Successfully connected to manual port");
+      delay(3000); // Give Arduino more time to initialize
+      
+      // Clear any initial data from Arduino
+      while (serialPort.available() > 0) {
+        serialPort.read();
+      }
+      
+      println("Arduino should be ready now!");
+      logEvent("SYSTEM", "READY", "", "Arduino initialization complete");
+    } catch (Exception e) {
+      println("Could not connect to Arduino. Please check the port name.");
+      println("Available ports:");
+      printArray(ports);
+      logEvent("CONNECTION", "FAILED", portName, "Connection failed: " + e.getMessage());
+      isConnected = false;
+    }
+  }
+  
+  sessionStartTime = millis();
+}
+
+void setupCSVLogging() {
+  // Create new table for CSV data
+  dataTable = new Table();
+  
+  // Add columns
+  dataTable.addColumn("timestamp");
+  dataTable.addColumn("session_time_ms");
+  dataTable.addColumn("event_type");
+  dataTable.addColumn("command");
+  dataTable.addColumn("data");
+  dataTable.addColumn("notes");
+  
+  // Create filename with current timestamp
+  csvFilename = "robot_log_" + fileFormat.format(new Date()) + ".csv";
+  
+  // Log session start
+  logEvent("SESSION", "START", "", "Robot control session started");
+  
+  println("CSV logging initialized: " + csvFilename);
+}
+
+void logEvent(String eventType, String command, String data, String notes) {
+  if (!loggingEnabled) return;
+  
+  TableRow newRow = dataTable.addRow();
+  newRow.setString("timestamp", dateFormat.format(new Date()));
+  newRow.setInt("session_time_ms", millis() - sessionStartTime);
+  newRow.setString("event_type", eventType);
+  newRow.setString("command", command);
+  newRow.setString("data", data);
+  newRow.setString("notes", notes);
+  
+  // Save CSV file (this creates/updates the file each time)
+  saveTable(dataTable, csvFilename);
+}
+
+void draw() {
+  background(50);
+  
+  // Title
+  textAlign(CENTER);
+  fill(255);
+  textSize(24);
+  text("Arduino Robot Control", width/2, 40);
+  
+  // Connection status
+  textSize(16);
+  if (isConnected) {
+    fill(0, 255, 0);
+    text("Connected to: " + portName, width/2, 70);
+  } else {
+    fill(255, 0, 0);
+    text("Not Connected - Check port name", width/2, 70);
+  }
+  
+  // CSV logging status
+  if (loggingEnabled) {
+    fill(0, 200, 255);
+    textSize(12);
+    text("CSV Logging: ON (" + csvFilename + ")", width/2, 90);
+  } else {
+    fill(200, 200, 0);
+    textSize(12);
+    text("CSV Logging: OFF", width/2, 90);
+  }
+  
+  // Current command display
+  fill(255);
+  textSize(18);
+  text("Current Command: " + currentCommand, width/2, 115);
+  
+  // Last message from Arduino
+  if (!lastMessage.equals("")) {
+    text("Arduino says: " + lastMessage, width/2, 140);
+  }
+  
+  // Session time
+  fill(200);
+  textSize(12);
+  int sessionTime = (millis() - sessionStartTime) / 1000;
+  text("Session Time: " + sessionTime + "s | Logged Events: " + dataTable.getRowCount(), width/2, 160);
+  
+  // Control buttons layout
+  int centerX = width/2;
+  int centerY = height/2 + 40;
+  
+  // Forward button (W)
+  drawButton(centerX, centerY - buttonSpacing, "FORWARD", "W", color(0, 200, 0));
+  
+  // Left button (A)
+  drawButton(centerX - buttonSpacing, centerY, "LEFT", "A", color(0, 150, 200));
+  
+  // Stop button (X)
+  drawButton(centerX, centerY, "STOP", "X", color(200, 0, 0));
+  
+  // Right button (D)
+  drawButton(centerX + buttonSpacing, centerY, "RIGHT", "D", color(0, 150, 200));
+  
+  // Backward button (S)
+  drawButton(centerX, centerY + buttonSpacing, "BACKWARD", "S", color(200, 100, 0));
+  
+  // Instructions
+  fill(255);
+  textSize(14);
+  textAlign(CENTER);
+  text("Click buttons or use keyboard:", width/2, height - 120);
+  text("W=Forward, S=Backward, A=Left, D=Right, X=Stop", width/2, height - 100);
+  text("Press R to reconnect, T to test Arduino connection", width/2, height - 80);
+  text("Press SPACE to send test command, L to toggle logging", width/2, height - 60);
+  text("Press E to export current CSV, C to clear log", width/2, height - 40);
+  text("CSV file saved to sketch folder: " + csvFilename, width/2, height - 20);
+  
+  // Read messages from Arduino
+  if (isConnected && serialPort.available() > 0) {
+    lastMessage = serialPort.readStringUntil('\n');
+    if (lastMessage != null) {
+      lastMessage = lastMessage.trim();
+      println("Arduino: " + lastMessage);
+      logEvent("ARDUINO_RESPONSE", "MESSAGE", lastMessage, "Response from Arduino");
+    }
+  }
+}
+
+void drawButton(int x, int y, String label, String key, color buttonColor) {
+  // Check if mouse is over button
+  boolean isHovered = (mouseX > x - buttonSize/2 && mouseX < x + buttonSize/2 && 
+                       mouseY > y - buttonSize/2 && mouseY < y + buttonSize/2);
+  
+  // Draw button
+  if (isHovered) {
+    fill(red(buttonColor) + 50, green(buttonColor) + 50, blue(buttonColor) + 50);
+    stroke(255);
+    strokeWeight(3);
+  } else {
+    fill(buttonColor);
+    stroke(200);
+    strokeWeight(1);
+  }
+  
+  rect(x - buttonSize/2, y - buttonSize/2, buttonSize, buttonSize, 10);
+  
+  // Draw button text
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(12);
+  text(label, x, y - 8);
+  text("(" + key + ")", x, y + 8);
+}
+
+void mousePressed() {
+  int centerX = width/2;
+  int centerY = height/2 + 40;
+  
+  // Check which button was clicked
+  if (isButtonClicked(centerX, centerY - buttonSpacing)) {
+    sendCommand('w');
+  } else if (isButtonClicked(centerX - buttonSpacing, centerY)) {
+    sendCommand('a');
+  } else if (isButtonClicked(centerX, centerY)) {
+    sendCommand('x');
+  } else if (isButtonClicked(centerX + buttonSpacing, centerY)) {
+    sendCommand('d');
+  } else if (isButtonClicked(centerX, centerY + buttonSpacing)) {
+    sendCommand('s');
+  }
+}
+
+boolean isButtonClicked(int x, int y) {
+  return (mouseX > x - buttonSize/2 && mouseX < x + buttonSize/2 && 
+          mouseY > y - buttonSize/2 && mouseY < y + buttonSize/2);
+}
+
+void keyPressed() {
+  char command = Character.toLowerCase(key);
+  
+  switch (command) {
+    case 'w':
+    case 's':
+    case 'a':
+    case 'd':
+    case 'x':
+      sendCommand(command);
+      break;
+    case 'r':
+      // Reconnect to Arduino
+      reconnect();
+      break;
+    case 't':
+      // Test Arduino connection
+      testConnection();
+      break;
+    case 'l':
+      // Toggle CSV logging
+      loggingEnabled = !loggingEnabled;
+      String status = loggingEnabled ? "enabled" : "disabled";
+      println("CSV logging " + status);
+      logEvent("SYSTEM", "LOGGING_TOGGLE", status, "User toggled CSV logging");
+      break;
+    case 'e':
+      // Export current CSV
+      exportCSV();
+      break;
+    case 'c':
+      // Clear log and start new CSV
+      clearLog();
+      break;
+    case ' ':
+      // Send test command
+      println("Sending test forward command...");
+      logEvent("SYSTEM", "TEST_START", "", "User initiated test sequence");
+      sendCommand('w');
+      delay(1000);
+      sendCommand('x');
+      logEvent("SYSTEM", "TEST_END", "", "Test sequence completed");
+      break;
+  }
+}
+
+void sendCommand(char command) {
+  if (!isConnected) {
+    println("Not connected to Arduino!");
+    logEvent("ERROR", "NO_CONNECTION", String.valueOf(command), "Attempted to send command without connection");
+    return;
+  }
+  
+  try {
+    // Send the command
+    serialPort.write(command);
+    
+    // Update current command display
+    String commandName = "";
+    switch (command) {
+      case 'w':
+        currentCommand = "FORWARD";
+        commandName = "FORWARD";
+        break;
+      case 's':
+        currentCommand = "BACKWARD";
+        commandName = "BACKWARD";
+        break;
+      case 'a':
+        currentCommand = "LEFT";
+        commandName = "LEFT";
+        break;
+      case 'd':
+        currentCommand = "RIGHT";
+        commandName = "RIGHT";
+        break;
+      case 'x':
+        currentCommand = "STOP";
+        commandName = "STOP";
+        break;
+    }
+    
+    println("Sent command: '" + command + "' to Arduino");
+    logEvent("COMMAND", commandName, String.valueOf(command), "Command sent to Arduino");
+    
+    // Add a small delay to ensure command is processed
+    delay(10);
+    
+  } catch (Exception e) {
+    println("Error sending command: " + e.getMessage());
+    logEvent("ERROR", "SEND_FAILED", String.valueOf(command), "Failed to send command: " + e.getMessage());
+    isConnected = false;
+  }
+}
+
+void reconnect() {
+  logEvent("CONNECTION", "RECONNECT_ATTEMPT", portName, "User initiated reconnection");
+  try {
+    if (serialPort != null) {
+      serialPort.stop();
+    }
+    delay(1000); // Wait before reconnecting
+    serialPort = new Serial(this, portName, 9600);
+    delay(3000); // Give Arduino time to initialize
+    
+    // Clear any initial data from Arduino
+    while (serialPort.available() > 0) {
+      serialPort.read();
+    }
+    
+    isConnected = true;
+    println("Reconnected to Arduino");
+    logEvent("CONNECTION", "RECONNECT_SUCCESS", portName, "Successfully reconnected to Arduino");
+    lastMessage = "";
+  } catch (Exception e) {
+    println("Reconnection failed: " + e.getMessage());
+    logEvent("CONNECTION", "RECONNECT_FAILED", portName, "Reconnection failed: " + e.getMessage());
+    isConnected = false;
+  }
+}
+
+void testConnection() {
+  if (!isConnected) {
+    println("Not connected to test!");
+    logEvent("ERROR", "TEST_NO_CONNECTION", "", "Attempted connection test without connection");
+    return;
+  }
+  
+  println("Testing Arduino connection...");
+  logEvent("SYSTEM", "TEST_CONNECTION", "", "Connection test initiated");
+  println("Sending 'w' command...");
+  serialPort.write('w');
+  delay(100);
+  
+  // Check if Arduino responds
+  if (serialPort.available() > 0) {
+    String response = serialPort.readStringUntil('\n');
+    if (response != null) {
+      println("Arduino responded: " + response.trim());
+      logEvent("SYSTEM", "TEST_SUCCESS", response.trim(), "Arduino connection test successful");
+    }
+  } else {
+    println("No response from Arduino - check if Arduino code is running");
+    logEvent("SYSTEM", "TEST_NO_RESPONSE", "", "No response from Arduino during test");
+  }
+}
+
+void exportCSV() {
+  String exportFilename = "robot_export_" + fileFormat.format(new Date()) + ".csv";
+  saveTable(dataTable, exportFilename);
+  println("CSV exported to: " + exportFilename);
+  logEvent("SYSTEM", "EXPORT", exportFilename, "CSV data exported to new file");
+}
+
+void clearLog() {
+  // Save final count
+  int oldCount = dataTable.getRowCount();
+  
+  // Create new table and filename
+  dataTable = new Table();
+  dataTable.addColumn("timestamp");
+  dataTable.addColumn("session_time_ms");
+  dataTable.addColumn("event_type");
+  dataTable.addColumn("command");
+  dataTable.addColumn("data");
+  dataTable.addColumn("notes");
+  
+  csvFilename = "robot_log_" + fileFormat.format(new Date()) + ".csv";
+  sessionStartTime = millis();
+  
+  // Log the clear event
+  logEvent("SYSTEM", "LOG_CLEARED", "", "Previous log had " + oldCount + " events. New session started.");
+  
+  println("Log cleared. New CSV file: " + csvFilename);
+}
+
+// Clean up when closing
+void exit() {
+  logEvent("SESSION", "END", "", "Robot control session ended");
+  if (serialPort != null) {
+    serialPort.stop();
+  }
+  super.exit();
+}
