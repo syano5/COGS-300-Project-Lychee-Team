@@ -1,0 +1,561 @@
+import processing.serial.*;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+// Serial communication
+Serial serialPort;
+String portName = "COM8"; // Change this to your Arduino's port
+
+// GUI elements
+boolean isConnected = false;
+String currentCommand = "STOP";
+String lastMessage = "";
+
+// Path replay variables
+Table pathData;
+ArrayList<PathCommand> commands;
+boolean isReplaying = false;
+boolean isPaused = false;
+int currentCommandIndex = 0;
+int replayStartTime = 0;
+int nextCommandTime = 0;
+String csvFilename = "";
+boolean csvLoaded = false;
+
+// Button properties
+int buttonSize = 80;
+int buttonSpacing = 100;
+
+// Path command class
+class PathCommand {
+  int sessionTime; // Time when command should be executed (relative to start)
+  String command;
+  char commandChar;
+  String commandName;
+  
+  PathCommand(int time, String cmd, char cmdChar, String name) {
+    this.sessionTime = time;
+    this.command = cmd;
+    this.commandChar = cmdChar;
+    this.commandName = name;
+  }
+}
+
+void setup() {
+  size(800, 700);
+  
+  // Initialize command list
+  commands = new ArrayList<PathCommand>();
+  
+  // List available serial ports
+  String[] ports = Serial.list();
+  printArray(ports);
+  
+  // Auto-detect Arduino port
+  connectToArduino(ports);
+}
+
+void connectToArduino(String[] ports) {
+  isConnected = false;
+  
+  // Try auto-detection first
+  for (String port : ports) {
+    if (port.contains("usbmodem") || port.contains("usbserial")) {
+      try {
+        serialPort = new Serial(this, port, 9600);
+        portName = port;
+        isConnected = true;
+        println("Auto-connected to Arduino on port: " + portName);
+        delay(3000); // Give Arduino time to initialize
+        
+        // Clear any initial data from Arduino
+        while (serialPort.available() > 0) {
+          serialPort.read();
+        }
+        
+        println("Arduino ready!");
+        break;
+      } catch (Exception e) {
+        println("Failed to connect to " + port);
+      }
+    }
+  }
+  
+  // If auto-detection failed, try the manually specified port
+  if (!isConnected) {
+    try {
+      serialPort = new Serial(this, portName, 9600);
+      isConnected = true;
+      println("Connected to Arduino on port: " + portName);
+      delay(3000); // Give Arduino time to initialize
+      
+      // Clear any initial data from Arduino
+      while (serialPort.available() > 0) {
+        serialPort.read();
+      }
+      
+      println("Arduino ready!");
+    } catch (Exception e) {
+      println("Could not connect to Arduino. Please check the port name.");
+      println("Available ports:");
+      printArray(ports);
+      isConnected = false;
+    }
+  }
+}
+
+void draw() {
+  background(50);
+  
+  // Title
+  textAlign(CENTER);
+  fill(255);
+  textSize(24);
+  text("Robot Path Replay", width/2, 40);
+  
+  // Connection status
+  textSize(16);
+  if (isConnected) {
+    fill(0, 255, 0);
+    text("Connected to: " + portName, width/2, 70);
+  } else {
+    fill(255, 0, 0);
+    text("Not Connected - Check port name", width/2, 70);
+  }
+  
+  // CSV status
+  textSize(14);
+  if (csvLoaded) {
+    fill(0, 200, 255);
+    text("CSV Loaded: " + csvFilename + " (" + commands.size() + " commands)", width/2, 95);
+  } else {
+    fill(200, 200, 0);
+    text("No CSV loaded - Press 'O' to open file", width/2, 95);
+  }
+  
+  // Replay status
+  fill(255);
+  textSize(18);
+  if (isReplaying && !isPaused) {
+    fill(0, 255, 0);
+    text("REPLAYING - Command " + (currentCommandIndex + 1) + " of " + commands.size(), width/2, 125);
+  } else if (isPaused) {
+    fill(255, 200, 0);
+    text("PAUSED - Press SPACE to resume", width/2, 125);
+  } else if (csvLoaded) {
+    fill(255);
+    text("READY TO REPLAY - Press ENTER to start", width/2, 125);
+  } else {
+    fill(200);
+    text("Load CSV file to begin", width/2, 125);
+  }
+  
+  // Current command display
+  fill(255);
+  textSize(16);
+  text("Current Command: " + currentCommand, width/2, 155);
+  
+  // Last message from Arduino
+  if (!lastMessage.equals("")) {
+    text("Arduino says: " + lastMessage, width/2, 180);
+  }
+  
+  // Time information
+  fill(200);
+  textSize(12);
+  if (isReplaying) {
+    int elapsed = millis() - replayStartTime;
+    text("Replay Time: " + (elapsed / 1000) + "s", width/2, 205);
+    
+    if (currentCommandIndex < commands.size()) {
+      PathCommand nextCmd = commands.get(currentCommandIndex);
+      int timeToNext = (nextCmd.sessionTime - elapsed) / 1000;
+      text("Next command in: " + max(0, timeToNext) + "s (" + nextCmd.commandName + ")", width/2, 225);
+    }
+  }
+  
+  // Control buttons layout
+  int centerX = width/2;
+  int centerY = height/2;
+  
+  // Replay control buttons
+  drawButton(centerX - 120, centerY - 50, "OPEN CSV", "O", color(0, 150, 200));
+  drawButton(centerX, centerY - 50, "START", "ENTER", color(0, 200, 0));
+  drawButton(centerX + 120, centerY - 50, "STOP", "ESC", color(200, 0, 0));
+  
+  drawButton(centerX - 60, centerY + 20, "PAUSE", "SPACE", color(200, 150, 0));
+  drawButton(centerX + 60, centerY + 20, "RESET", "R", color(150, 0, 150));
+  
+  // Manual control buttons (smaller, at bottom)
+  int manualY = height - 200;
+  int manualSize = 50;
+  
+  fill(150);
+  textSize(14);
+  text("Manual Controls (for testing):", width/2, manualY - 40);
+  
+  drawManualButton(centerX, manualY - 60, "FWD", "W", color(0, 150, 0), manualSize);
+  drawManualButton(centerX - 70, manualY, "LEFT", "A", color(0, 100, 150), manualSize);
+  drawManualButton(centerX, manualY, "STOP", "X", color(150, 0, 0), manualSize);
+  drawManualButton(centerX + 70, manualY, "RIGHT", "D", color(0, 100, 150), manualSize);
+  drawManualButton(centerX, manualY + 60, "BACK", "S", color(150, 100, 0), manualSize);
+  
+  // Instructions
+  fill(255);
+  textSize(12);
+  textAlign(CENTER);
+  text("Instructions:", width/2, height - 100);
+  text("O = Open CSV file, ENTER = Start replay, ESC = Stop replay", width/2, height - 85);
+  text("SPACE = Pause/Resume, R = Reset to beginning", width/2, height - 70);
+  text("Manual controls: W/A/S/D/X for testing connection", width/2, height - 55);
+  text("CSV file should be in the sketch folder", width/2, height - 40);
+  
+  // Process replay
+  if (isReplaying && !isPaused && csvLoaded) {
+    processReplay();
+  }
+  
+  // Read messages from Arduino
+  if (isConnected && serialPort.available() > 0) {
+    lastMessage = serialPort.readStringUntil('\n');
+    if (lastMessage != null) {
+      lastMessage = lastMessage.trim();
+      println("Arduino: " + lastMessage);
+    }
+  }
+}
+
+void drawButton(int x, int y, String label, String key, color buttonColor) {
+  // Check if mouse is over button
+  boolean isHovered = (mouseX > x - buttonSize/2 && mouseX < x + buttonSize/2 && 
+                       mouseY > y - buttonSize/2 && mouseY < y + buttonSize/2);
+  
+  // Draw button
+  if (isHovered) {
+    fill(red(buttonColor) + 50, green(buttonColor) + 50, blue(buttonColor) + 50);
+    stroke(255);
+    strokeWeight(3);
+  } else {
+    fill(buttonColor);
+    stroke(200);
+    strokeWeight(1);
+  }
+  
+  rect(x - buttonSize/2, y - buttonSize/2, buttonSize, buttonSize, 10);
+  
+  // Draw button text
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(10);
+  text(label, x, y - 8);
+  text("(" + key + ")", x, y + 8);
+}
+
+void drawManualButton(int x, int y, String label, String key, color buttonColor, int size) {
+  // Check if mouse is over button
+  boolean isHovered = (mouseX > x - size/2 && mouseX < x + size/2 && 
+                       mouseY > y - size/2 && mouseY < y + size/2);
+  
+  // Draw button
+  if (isHovered) {
+    fill(red(buttonColor) + 50, green(buttonColor) + 50, blue(buttonColor) + 50);
+    stroke(255);
+    strokeWeight(2);
+  } else {
+    fill(buttonColor);
+    stroke(200);
+    strokeWeight(1);
+  }
+  
+  rect(x - size/2, y - size/2, size, size, 5);
+  
+  // Draw button text
+  fill(255);
+  textAlign(CENTER, CENTER);
+  textSize(8);
+  text(label, x, y - 4);
+  text("(" + key + ")", x, y + 4);
+}
+
+void mousePressed() {
+  int centerX = width/2;
+  int centerY = height/2;
+  
+  // Check replay control buttons
+  if (isButtonClicked(centerX - 120, centerY - 50, buttonSize)) {
+    openCSVFile();
+  } else if (isButtonClicked(centerX, centerY - 50, buttonSize)) {
+    startReplay();
+  } else if (isButtonClicked(centerX + 120, centerY - 50, buttonSize)) {
+    stopReplay();
+  } else if (isButtonClicked(centerX - 60, centerY + 20, buttonSize)) {
+    pauseReplay();
+  } else if (isButtonClicked(centerX + 60, centerY + 20, buttonSize)) {
+    resetReplay();
+  }
+  
+  // Check manual control buttons
+  int manualY = height - 200;
+  int manualSize = 50;
+  
+  if (isButtonClicked(centerX, manualY - 60, manualSize)) {
+    sendCommand('w');
+  } else if (isButtonClicked(centerX - 70, manualY, manualSize)) {
+    sendCommand('a');
+  } else if (isButtonClicked(centerX, manualY, manualSize)) {
+    sendCommand('x');
+  } else if (isButtonClicked(centerX + 70, manualY, manualSize)) {
+    sendCommand('d');
+  } else if (isButtonClicked(centerX, manualY + 60, manualSize)) {
+    sendCommand('s');
+  }
+}
+
+boolean isButtonClicked(int x, int y, int size) {
+  return (mouseX > x - size/2 && mouseX < x + size/2 && 
+          mouseY > y - size/2 && mouseY < y + size/2);
+}
+
+void keyPressed() {
+  char command = Character.toLowerCase(key);
+  
+  switch (command) {
+    case 'o':
+      openCSVFile();
+      break;
+    case 'r':
+      if (key == 'r' || key == 'R') {
+        resetReplay();
+      } else {
+        // reconnect to Arduino
+        reconnect();
+      }
+      break;
+    case ' ':
+      pauseReplay();
+      break;
+    case 'w':
+    case 's':
+    case 'a':
+    case 'd':
+    case 'x':
+      sendCommand(command);
+      break;
+  }
+  
+  // Handle special keys
+  if (key == ENTER || key == RETURN) {
+    startReplay();
+  } else if (key == ESC) {
+    stopReplay();
+    key = 0; // Prevent Processing from closing
+  }
+}
+
+void openCSVFile() {
+  // Use selectInput to choose CSV file
+  selectInput("Select a robot log CSV file:", "fileSelected");
+}
+
+void fileSelected(File selection) {
+  if (selection == null) {
+    println("No file selected.");
+    return;
+  }
+  
+  csvFilename = selection.getName();
+  String fullPath = selection.getAbsolutePath();
+  
+  try {
+    // Load the CSV file
+    pathData = loadTable(fullPath, "header");
+    parseCommands();
+    csvLoaded = true;
+    println("Successfully loaded: " + csvFilename + " with " + commands.size() + " commands");
+  } catch (Exception e) {
+    println("Error loading CSV file: " + e.getMessage());
+    csvLoaded = false;
+  }
+}
+
+void parseCommands() {
+  commands.clear();
+  
+  if (pathData == null) return;
+  
+  for (TableRow row : pathData.rows()) {
+    String eventType = row.getString("event_type");
+    
+    // Only process COMMAND events
+    if (eventType.equals("COMMAND")) {
+      int sessionTime = row.getInt("session_time_ms");
+      String commandName = row.getString("command");
+      String data = row.getString("data");
+      
+      if (data != null && data.length() > 0) {
+        char commandChar = data.charAt(0);
+        commands.add(new PathCommand(sessionTime, commandName, commandChar, commandName));
+      }
+    }
+  }
+  
+  println("Parsed " + commands.size() + " commands from CSV");
+  
+  // Print command sequence for verification
+  for (int i = 0; i < commands.size(); i++) {
+    PathCommand cmd = commands.get(i);
+    println("Command " + (i+1) + ": " + cmd.commandName + " (" + cmd.commandChar + ") at " + (cmd.sessionTime/1000.0) + "s");
+  }
+}
+
+void startReplay() {
+  if (!csvLoaded || commands.size() == 0) {
+    println("No CSV file loaded or no commands to replay!");
+    return;
+  }
+  
+  if (!isConnected) {
+    println("Not connected to Arduino!");
+    return;
+  }
+  
+  isReplaying = true;
+  isPaused = false;
+  replayStartTime = millis();
+  currentCommandIndex = 0;
+  
+  println("Starting replay of " + commands.size() + " commands...");
+}
+
+void stopReplay() {
+  isReplaying = false;
+  isPaused = false;
+  currentCommandIndex = 0;
+  sendCommand('x'); // Stop the robot
+  println("Replay stopped");
+}
+
+void pauseReplay() {
+  if (!isReplaying) return;
+  
+  isPaused = !isPaused;
+  
+  if (isPaused) {
+    sendCommand('x'); // Stop the robot
+    println("Replay paused");
+  } else {
+    // Adjust the start time to account for pause duration
+    replayStartTime = millis() - commands.get(currentCommandIndex).sessionTime;
+    println("Replay resumed");
+  }
+}
+
+void resetReplay() {
+  currentCommandIndex = 0;
+  if (isReplaying) {
+    replayStartTime = millis();
+  }
+  println("Replay reset to beginning");
+}
+
+void processReplay() {
+  if (currentCommandIndex >= commands.size()) {
+    // Replay finished
+    isReplaying = false;
+    sendCommand('x'); // Stop the robot
+    println("Replay completed!");
+    return;
+  }
+  
+  PathCommand nextCommand = commands.get(currentCommandIndex);
+  int currentTime = millis() - replayStartTime;
+  
+  // Check if it's time to execute the next command
+  if (currentTime >= nextCommand.sessionTime) {
+    sendCommand(nextCommand.commandChar);
+    println("Executed command " + (currentCommandIndex + 1) + "/" + commands.size() + 
+            ": " + nextCommand.commandName + " at " + (currentTime/1000.0) + "s");
+    
+    currentCommandIndex++;
+  }
+}
+
+void sendCommand(char command) {
+  if (!isConnected) {
+    println("Not connected to Arduino!");
+    return;
+  }
+  
+  try {
+    // Send the command
+    serialPort.write(command);
+    
+    // Update current command display
+    String commandName = "";
+    switch (command) {
+      case 'w':
+        currentCommand = "FORWARD";
+        commandName = "FORWARD";
+        break;
+      case 's':
+        currentCommand = "BACKWARD";
+        commandName = "BACKWARD";
+        break;
+      case 'a':
+        currentCommand = "LEFT";
+        commandName = "LEFT";
+        break;
+      case 'd':
+        currentCommand = "RIGHT";
+        commandName = "RIGHT";
+        break;
+      case 'x':
+        currentCommand = "STOP";
+        commandName = "STOP";
+        break;
+    }
+    
+    println("Sent command: '" + command + "' (" + commandName + ") to Arduino");
+    
+    // Add a small delay to ensure command is processed
+    delay(10);
+    
+  } catch (Exception e) {
+    println("Error sending command: " + e.getMessage());
+    isConnected = false;
+  }
+}
+
+void reconnect() {
+  try {
+    if (serialPort != null) {
+      serialPort.stop();
+    }
+    delay(1000); // Wait before reconnecting
+    serialPort = new Serial(this, portName, 9600);
+    delay(3000); // Give Arduino time to initialize
+    
+    // Clear any initial data from Arduino
+    while (serialPort.available() > 0) {
+      serialPort.read();
+    }
+    
+    isConnected = true;
+    println("Reconnected to Arduino");
+    lastMessage = "";
+  } catch (Exception e) {
+    println("Reconnection failed: " + e.getMessage());
+    isConnected = false;
+  }
+}
+
+// Clean up when closing
+void exit() {
+  if (isReplaying) {
+    sendCommand('x'); // Stop the robot before closing
+  }
+  if (serialPort != null) {
+    serialPort.stop();
+  }
+  super.exit();
+}
