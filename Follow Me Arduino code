@@ -1,0 +1,253 @@
+#define enA 9  // Enable pin for Motor A (right motor), PWM compatible
+#define in1 8  // Direction control pin 1 for Motor A
+#define in2 7  // Direction control pin 2 for Motor A 
+#define enB 6  // Enable pin for Motor B (left motor), PWM compatible
+#define in3 5  // Direction control pin 1 for Motor B
+#define in4 4  // Direction control pin 2 for Motor B
+
+// Ultrasonic sensor pins
+#define TRIG_PIN 10  // Trigger pin for ultrasonic sensor
+#define ECHO_PIN 11  // Echo pin for ultrasonic sensor
+
+const int D_1 = 2, D_2 = 3;
+
+// P-controller parameters
+const float SET_POINT = 25.0;  // Target distance in cm
+const float Kp = 8.0;          // Proportional gain (tune this value)
+const int MAX_SPEED = 200;     // Maximum motor speed
+const int MIN_SPEED = 50;      // Minimum speed to overcome friction
+
+// Operating modes
+enum Mode {
+  MANUAL,
+  FOLLOW_ME
+};
+
+Mode currentMode = MANUAL;
+
+// Note:
+// in1 HIGH and in2 LOW --> FORWARDS
+// in1 LOW and in2 HIGH --> BACKWARDS
+
+void setup() {
+  // Set motor control pins as outputs
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // Set ultrasonic sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  pinMode(D_1, INPUT_PULLUP);   // use pullups; pressed/LOW = 0
+  pinMode(D_2, INPUT_PULLUP);
+  
+  // Initialize serial communication
+  Serial.begin(9600);
+  Serial.println("Robot ready!");
+  Serial.println("Manual mode: w/s/a/d/x");
+  Serial.println("Follow Me mode: f");
+}
+
+// Measure distance using ultrasonic sensor
+float getDistance() {
+  // Send 10us pulse to trigger
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  // Read echo pulse duration
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);  // Timeout after 30ms
+  
+  // Calculate distance in cm (speed of sound = 343 m/s)
+  if (duration == 0) {
+    return -1;  // No echo received
+  }
+  
+  float distance = duration * 0.034 / 2.0;
+  return distance;
+}
+
+// Low-level motor control function
+void controlMotor(int motorA_speed, int motorB_speed) {
+  // Motor A (right motor) control
+  if (motorA_speed >= 0) {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+  } else {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    motorA_speed = -motorA_speed;
+  }
+  analogWrite(enA, constrain(motorA_speed, 0, 255));
+  
+  // Motor B (left motor) control
+  if (motorB_speed >= 0) {
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+  } else {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    motorB_speed = -motorB_speed;
+  }
+  analogWrite(enB, constrain(motorB_speed, 0, 255));
+}
+
+// P-controller for follow-me behavior
+void followMe() {
+  float distance = getDistance();
+  
+  // Check for valid reading
+  if (distance < 0 || distance > 100) {
+    stopRobot();
+    Serial.print("No object detected (distance: ");
+    Serial.print(distance);
+    Serial.println(" cm)");
+    return;
+  }
+  
+  // Debug: print all readings
+  Serial.print("Raw distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+  
+  // Calculate error (positive = too far, negative = too close)
+  float error = distance - SET_POINT;
+  
+  // Calculate output using P-controller
+  float output = Kp * error;
+  
+  // Map output to motor speed range
+  int motorSpeed = constrain((int)output, -MAX_SPEED, MAX_SPEED);
+  
+  // Apply minimum speed threshold to overcome friction
+  if (motorSpeed > 0 && motorSpeed < MIN_SPEED) {
+    motorSpeed = MIN_SPEED;
+  } else if (motorSpeed < 0 && motorSpeed > -MIN_SPEED) {
+    motorSpeed = -MIN_SPEED;
+  }
+  
+  // Create a deadband around the setpoint (±2cm)
+  if (abs(error) < 2.0) {
+    stopRobot();
+    Serial.print("At target: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+  } else {
+    // Drive motors (positive = forward, negative = backward)
+    controlMotor(motorSpeed, motorSpeed);
+    
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.print(" cm, Error: ");
+    Serial.print(error);
+    Serial.print(" cm, Speed: ");
+    Serial.println(motorSpeed);
+  }
+}
+
+// Drive the robot forwards
+void driveForward(int speed) {
+  controlMotor(speed, speed);
+}
+
+// Drive the robot backwards
+void driveBackward(int speed) {
+  controlMotor(-speed, -speed);
+}
+
+// Turn the robot left while driving forward
+void turnLeft(int speed) {
+  controlMotor(speed, speed / 2);  // Right motor full, left motor half
+}
+
+// Turn the robot right while driving forward
+void turnRight(int speed) {
+  controlMotor(speed / 2, speed);  // Right motor half, left motor full
+}
+
+// Stop the robot
+void stopRobot() {
+  controlMotor(0, 0);
+}
+
+void loop() {
+  // Check if data is available from Serial Monitor
+  if (Serial.available() > 0) {
+    char command = Serial.read();
+    
+    // Read sensor values
+    int v1 = digitalRead(D_1);
+    int v2 = digitalRead(D_2);
+    
+    switch (command) {
+      case 'f':  // Enter Follow Me mode
+        currentMode = FOLLOW_ME;
+        Serial.println("FOLLOW ME MODE ACTIVE");
+        break;
+        
+      case 'w':  // Forward
+        currentMode = MANUAL;
+        driveForward(65);
+        Serial.print("FORWARD | Sensors: ");
+        Serial.print(v1); 
+        Serial.print(',');
+        Serial.println(v2);
+        break;
+        
+      case 's':  // Backward
+        currentMode = MANUAL;
+        driveBackward(65);
+        Serial.print("BACK | Sensors: ");
+        Serial.print(v1); 
+        Serial.print(',');
+        Serial.println(v2);
+        break;
+        
+      case 'a':  // Left
+        currentMode = MANUAL;
+        turnLeft(50);
+        Serial.print("LEFT | Sensors: ");
+        Serial.print(v1); 
+        Serial.print(',');
+        Serial.println(v2);
+        break;
+        
+      case 'd':  // Right
+        currentMode = MANUAL;
+        turnRight(50);
+        Serial.print("RIGHT | Sensors: ");
+        Serial.print(v1); 
+        Serial.print(',');
+        Serial.println(v2);
+        break;
+        
+      case 'x':  // Stop
+        currentMode = MANUAL;
+        stopRobot();
+        Serial.print("STOP | Sensors: ");
+        Serial.print(v1); 
+        Serial.print(',');
+        Serial.println(v2);
+        break;
+        
+      default:
+        Serial.println("Commands: f=follow, w/s/a/d/x=manual");
+        break;
+    }
+  }
+  
+  // Execute current mode
+  if (currentMode == FOLLOW_ME) {
+    followMe();
+    delay(50);  // Small delay for stability in Follow Me mode
+  } else {
+    // Small delay to prevent overwhelming the serial buffer
+    delay(10);
+  }
+}
