@@ -28,6 +28,7 @@ const int MOTOR_TRIM = 10;            // Adjust if robot drifts
 // Corner detection thresholds
 const float INSIDE_CORNER_THRESHOLD = 15.0;   // Front obstacle closer than this = inside corner
 const float OUTSIDE_CORNER_THRESHOLD = 50.0;  // Side wall farther than this = outside corner
+const float WALL_FOUND_THRESHOLD = 35.0;      // Wall closer than this = found wall again after outside corner
 const float LOST_WALL_THRESHOLD = 100.0;      // Side wall farther than this = completely lost wall
 
 const int MAX_SPEED = 150;
