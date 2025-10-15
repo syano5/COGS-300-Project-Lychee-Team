@@ -1,0 +1,194 @@
+#include <Servo.h>
+
+// -------------------- Servo Setup --------------------
+Servo servo_9;
+int pos = 0;
+int increment = 3;
+int sweepDelay = 25;
+
+// -------------------- Ultrasonic Pins --------------------
+#define TRIG_PIN 10
+#define ECHO_PIN 11
+
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+
+// -------------------- Constants --------------------
+const float DETECTION_RANGE = 150.0; // cm (~5 ft)
+const float STOP_DISTANCE = 30.0;    // cm (~1 ft)
+const int BASE_SPEED = 90;
+const int MAX_SPEED = 120;
+const int MIN_SPEED = 50;
+const float Kp = 6.0;                // proportional gain for following
+const float SET_POINT = 25.0;
+const int PAUSE_TIME = 5000;         // 5s pause
+
+// -------------------- State Variables --------------------
+enum Mode { SWEEP, ORIENT, FOLLOW, PAUSE };
+Mode currentMode = SWEEP;
+bool objectFound = false;
+int objectAngle = 90;
+
+// -------------------- Setup --------------------
+void setup() {
+  Serial.begin(9600);
+  servo_9.attach(3, 500, 2500);
+
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  Serial.println("Servo + Ultrasonic Integrated System Ready!");
+  servo_9.write(90);
+  delay(1000);
+}
+
+// -------------------- Distance Measurement --------------------
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // timeout after 30ms
+  if (duration == 0) return -1;
+  return duration * 0.034 / 2.0;
+}
+
+// -------------------- Motor Control --------------------
+void controlMotor(int motorA_speed, int motorB_speed) {
+  if (motorA_speed >= 0) {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+  } else {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    motorA_speed = -motorA_speed;
+  }
+  analogWrite(enA, constrain(motorA_speed, 0, 255));
+
+  if (motorB_speed >= 0) {
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+  } else {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    motorB_speed = -motorB_speed;
+  }
+  analogWrite(enB, constrain(motorB_speed, 0, 255));
+}
+
+void stopRobot() { controlMotor(0, 0); }
+void driveForward(int speed) { controlMotor(speed, speed); }
+void turnLeft(int speed) { controlMotor(-speed, speed); }
+void turnRight(int speed) { controlMotor(speed, -speed); }
+
+// -------------------- Servo Sweep --------------------
+void sweepAndDetect() {
+  static int direction = 1;
+  servo_9.write(pos);
+  float distance = getDistance();
+
+  if (distance > 0) {
+    Serial.print("Angle ");
+    Serial.print(pos);
+    Serial.print(" | Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.print(">>> Object detected at ");
+    Serial.print(distance);
+    Serial.print(" cm | angle ");
+    Serial.println(pos);
+    objectFound = true;
+    objectAngle = pos;
+    currentMode = ORIENT;
+    return;
+  }
+
+  pos += direction * increment;
+  if (pos >= 180 || pos <= 0) direction = -direction;
+  delay(sweepDelay);
+}
+
+// -------------------- Orient --------------------
+void orientToObject() {
+  int turnAmount = objectAngle - 90;
+  Serial.print("Orienting toward angle: ");
+  Serial.println(objectAngle);
+
+  if (turnAmount > 10) { // turn right
+    turnRight(BASE_SPEED);
+    delay(abs(turnAmount) * 10); // adjust time per degree
+  } else if (turnAmount < -10) { // turn left
+    turnLeft(BASE_SPEED);
+    delay(abs(turnAmount) * 10);
+  }
+
+  stopRobot();
+  servo_9.write(90); // center ultrasonic forward
+  delay(300);
+  currentMode = FOLLOW;
+}
+
+// -------------------- Follow --------------------
+void followMe() {
+  float distance = getDistance();
+  if (distance < 0 || distance > DETECTION_RANGE) {
+    Serial.println("Lost object! Resweeping...");
+    stopRobot();
+    currentMode = SWEEP;
+    return;
+  }
+
+  if (distance <= STOP_DISTANCE) {
+    stopRobot();
+    Serial.print("Reached target (");
+    Serial.print(distance);
+    Serial.println(" cm). Pausing...");
+    currentMode = PAUSE;
+    return;
+  }
+
+  float error = distance - SET_POINT;
+  float output = Kp * error;
+  int motorSpeed = constrain(BASE_SPEED + (int)output, MIN_SPEED, MAX_SPEED);
+
+  controlMotor(motorSpeed, motorSpeed);
+  Serial.print("Following | Distance: ");
+  Serial.print(distance);
+  Serial.print(" cm | Speed: ");
+  Serial.println(motorSpeed);
+  delay(100);
+}
+
+// -------------------- Pause --------------------
+void pauseThenSweep() {
+  Serial.println("Pausing for 5 seconds...");
+  delay(PAUSE_TIME);
+  Serial.println("Resuming sweep...");
+  currentMode = SWEEP;
+}
+
+// -------------------- Main Loop --------------------
+void loop() {
+  switch (currentMode) {
+    case SWEEP:  sweepAndDetect(); break;
+    case ORIENT: orientToObject(); break;
+    case FOLLOW: followMe(); break;
+    case PAUSE:  pauseThenSweep(); break;
+  }
+}
+
