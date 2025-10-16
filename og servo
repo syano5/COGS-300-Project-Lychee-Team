@@ -1,0 +1,319 @@
+// Servo Sweep Ultrasonic Detector Robot
+// Servo sweeps with ultrasonic sensor, orients toward detected objects and approaches them
+
+#include <Servo.h>
+
+// Motor pins
+#define enA 9  // Enable pin for Motor A (right motor), PWM compatible
+#define in1 8  // Direction control pin 1 for Motor A
+#define in2 7  // Direction control pin 2 for Motor A 
+#define enB 6  // Enable pin for Motor B (left motor), PWM compatible
+#define in3 5  // Direction control pin 1 for Motor B
+#define in4 4  // Direction control pin 2 for Motor B
+
+// Ultrasonic sensor pins
+#define TRIG_PIN 10  // Trigger pin for ultrasonic sensor
+#define ECHO_PIN 11  // Echo pin for ultrasonic sensor
+
+// Servo
+#define SERVO_PIN 3  // Servo control pin
+Servo servo_9;
+
+// Detection parameters
+const float DETECTION_RANGE = 150.0;  // Detection range in cm (150cm = ~5 feet)
+const float STOP_DISTANCE = 30.0;     // Stop distance in cm (30cm = ~1 foot)
+const int DRIVE_SPEED = 100;          // Speed when moving toward object
+const int TURN_SPEED = 80;            // Speed when turning to face object
+const int SWEEP_DELAY = 15;           // Delay between sweep steps
+const int SWEEP_STEP = 5;             // Degrees to move per sweep step
+
+// State variables
+enum RobotState {
+  SWEEPING,
+  ORIENTING,
+  APPROACHING
+};
+
+RobotState currentState = SWEEPING;
+int sweepPos = 90;
+int sweepDirection = 1;
+int objectAngle = 90;
+float lastDistance = -1;
+
+void setup() {
+  // Set motor control pins as outputs
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // Set ultrasonic sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  // Attach the servo
+  servo_9.attach(SERVO_PIN, 500, 2500);
+  servo_9.write(90); // Start at center
+  delay(500);
+  
+  // Initialize serial communication
+  Serial.begin(9600);
+  Serial.println("Servo Sweep Tracker Robot Ready!");
+  Serial.println("Sweeping and scanning for objects...");
+}
+
+// Measure distance using ultrasonic sensor
+float getDistance() {
+  // Send 10us pulse to trigger
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  // Read echo pulse duration
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);  // Timeout after 30ms
+  
+  // Calculate distance in cm (speed of sound = 343 m/s)
+  if (duration == 0) {
+    return -1;  // No echo received
+  }
+  
+  float distance = duration * 0.034 / 2.0;
+  return distance;
+}
+
+// Control motor speeds and directions
+void controlMotor(int motorA_speed, int motorB_speed) {
+  // Motor A (right motor) control
+  if (motorA_speed >= 0) {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+  } else {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    motorA_speed = -motorA_speed;
+  }
+  analogWrite(enA, constrain(motorA_speed, 0, 255));
+  
+  // Motor B (left motor) control
+  if (motorB_speed >= 0) {
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+  } else {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    motorB_speed = -motorB_speed;
+  }
+  analogWrite(enB, constrain(motorB_speed, 0, 255));
+}
+
+// Drive forward
+void driveForward(int speed) {
+  controlMotor(speed, speed);
+}
+
+// Turn left (0 degrees is left)
+void turnLeft(int speed) {
+  controlMotor(speed, -speed);  // Right motor forward, left motor backward
+}
+
+// Turn right (180 degrees is right)
+void turnRight(int speed) {
+  controlMotor(-speed, speed);  // Right motor backward, left motor forward
+}
+
+// Stop the robot
+void stopRobot() {
+  controlMotor(0, 0);
+}
+
+// Perform sweep and look for objects
+void performSweep() {
+  servo_9.write(sweepPos);
+  delay(SWEEP_DELAY);
+  
+  float distance = getDistance();
+  
+  // Print current position and distance
+  Serial.print("Sweep: ");
+  Serial.print(sweepPos);
+  Serial.print("° | Distance: ");
+  if (distance < 0) {
+    Serial.println("No reading");
+  } else {
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+  
+  // Check if object detected within range
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.println(">>> OBJECT DETECTED!");
+    Serial.print("    Angle: ");
+    Serial.print(sweepPos);
+    Serial.print("° | Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+    
+    objectAngle = sweepPos;
+    lastDistance = distance;
+    currentState = ORIENTING;
+    return;
+  }
+  
+  // Continue sweeping
+  sweepPos += (sweepDirection * SWEEP_STEP);
+  
+  // Reverse direction at limits
+  if (sweepPos >= 180) {
+    sweepPos = 180;
+    sweepDirection = -1;
+  } else if (sweepPos <= 0) {
+    sweepPos = 0;
+    sweepDirection = 1;
+  }
+}
+
+// Orient robot to face the detected object
+void orientToObject() {
+  Serial.print(">>> ORIENTING to face object at ");
+  Serial.print(objectAngle);
+  Serial.println("°");
+  
+  // Calculate how much to turn
+  // 90 degrees = straight ahead
+  // 0 degrees = left, 180 degrees = right
+  
+  int angleDiff = objectAngle - 90;
+  
+  if (abs(angleDiff) < 15) {
+    // Already facing object (within 15 degrees of center)
+    Serial.println(">>> Close enough to center! Moving forward...");
+    stopRobot();
+    servo_9.write(90); // Point servo straight ahead
+    delay(300);
+    currentState = APPROACHING;
+    return;
+  }
+  
+  // Turn to face the object
+  if (angleDiff < 0) {
+    // Object is to the left, turn left
+    Serial.print(">>> Turning LEFT by ");
+    Serial.print(abs(angleDiff));
+    Serial.println(" degrees");
+    turnLeft(TURN_SPEED);
+  } else {
+    // Object is to the right, turn right
+    Serial.print(">>> Turning RIGHT by ");
+    Serial.print(angleDiff);
+    Serial.println(" degrees");
+    turnRight(TURN_SPEED);
+  }
+  
+  // Turn for a duration proportional to the angle
+  int turnTime = abs(angleDiff) * 10; // Adjust multiplier based on your robot
+  delay(turnTime);
+  
+  stopRobot();
+  delay(300);
+  
+  // Point servo straight ahead and verify object is there
+  servo_9.write(90);
+  delay(300);
+  
+  float distance = getDistance();
+  Serial.print(">>> Verifying object at center: ");
+  if (distance < 0) {
+    Serial.println("No reading");
+  } else {
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+  
+  // Check if we can see the object straight ahead
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.println(">>> Object confirmed at center! Approaching...");
+    currentState = APPROACHING;
+  } else {
+    Serial.println(">>> Object not found at center. Resweeping...");
+    // Go back to sweeping to find it again
+    currentState = SWEEPING;
+    sweepPos = 60; // Start from left of center
+    sweepDirection = 1;
+  }
+}
+
+// Approach the object
+void approachObject() {
+  // Center servo to look straight ahead
+  servo_9.write(90);
+  delay(100);
+  
+  float distance = getDistance();
+  
+  Serial.print(">>> APPROACHING | Distance: ");
+  if (distance < 0) {
+    Serial.println("No reading - object lost!");
+    // Lost the object, go back to sweeping
+    currentState = SWEEPING;
+    sweepPos = 90;
+    return;
+  }
+  
+  Serial.print(distance);
+  Serial.println(" cm");
+  
+  // Check if we've reached the stop distance
+  if (distance <= STOP_DISTANCE) {
+    Serial.println(">>> ARRIVED! Stopping at target distance.");
+    stopRobot();
+    delay(2000); // Pause for 2 seconds
+    
+    // Resume sweeping to find next object
+    Serial.println(">>> Resuming sweep for next object...");
+    currentState = SWEEPING;
+    sweepPos = 90;
+    return;
+  }
+  
+  // Check if object is still in detection range
+  if (distance > DETECTION_RANGE) {
+    Serial.println(">>> Object out of range. Resuming sweep...");
+    currentState = SWEEPING;
+    sweepPos = 90;
+    return;
+  }
+  
+  // Move forward for 1 second
+  Serial.println(">>> Moving forward for 1 second...");
+  driveForward(DRIVE_SPEED);
+  delay(1000);
+  stopRobot();
+  
+  // Wait 0.5 seconds, then sweep again to reorient
+  delay(500);
+  
+  Serial.println(">>> Quick sweep to reorient...");
+  currentState = SWEEPING;
+  sweepPos = 60; // Start sweep from slightly left of center
+  sweepDirection = 1;
+}
+
+void loop() {
+  switch (currentState) {
+    case SWEEPING:
+      performSweep();
+      break;
+      
+    case ORIENTING:
+      orientToObject();
+      break;
+      
+    case APPROACHING:
+      approachObject();
+      break;
+  }
+}
