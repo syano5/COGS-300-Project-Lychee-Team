@@ -1,1 +1,117 @@
+#include <Servo.h>
+// -------------------- IR Sensor Pin --------------------
+#define IR_SENSOR 0
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
 
+// -------------------- Variables --------------------
+int motorSpeed = 100;
+bool lastTurnWasLeft = false;  // Track which way we turned last
+bool onLine = false;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Motor pins setup
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // IR sensor setup
+  pinMode(IR_SENSOR, INPUT);
+  
+  stopMotors();
+  Serial.println("Line Following Robot Ready!");
+  delay(2000);
+}
+
+void loop() {
+  int sensorValue = digitalRead(IR_SENSOR);
+  onLine = (sensorValue == 0);  // Adjust based on your sensor
+  
+  if (onLine) {
+    // On line - drive forward
+    driveForward();
+    Serial.println("On line - driving forward");
+  } else {
+    // Lost line - turn opposite direction and KEEP turning until we find it again
+    Serial.println("Lost line - searching...");
+    
+    // Turn in the opposite direction of last turn
+    while (!onLine) {
+      // Keep reading sensor while turning
+      sensorValue = digitalRead(IR_SENSOR);
+      onLine = (sensorValue == 0);
+      
+      if (lastTurnWasLeft) {
+        turnRight();
+        Serial.println("Turning RIGHT to find line");
+      } else {
+        turnLeft();
+        Serial.println("Turning LEFT to find line");
+      }
+      
+      delay(10);  // Small delay for stability
+    }
+    
+    // Found the line again!
+    Serial.println("Line found again!");
+  }
+  
+  delay(50);
+}
+
+// -------------------- Motor Control Functions --------------------
+void driveForward() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, motorSpeed);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, motorSpeed);
+}
+
+void turnLeft() {
+  lastTurnWasLeft = true;
+  
+  // Left motor slow/stopped, right motor forward
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, motorSpeed);
+}
+
+void turnRight() {
+  lastTurnWasLeft = false;
+  
+  // Left motor forward, right motor slow/stopped
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, motorSpeed);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
+
+void stopMotors() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
