@@ -1,0 +1,136 @@
+// Simple Line Following - Keep Both Sensors ON White Tape
+
+// -------------------- IR Sensor Pins --------------------
+#define LEFT_SENSOR 0   // Left IR sensor
+#define RIGHT_SENSOR 1  // Right IR sensor
+
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+
+// -------------------- Variables --------------------
+int forwardSpeed = 100;   // Speed when going straight
+int turnSpeed = 80;       // Speed of slower wheel when turning
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Motor pins setup
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // IR sensor setup
+  pinMode(LEFT_SENSOR, INPUT);
+  pinMode(RIGHT_SENSOR, INPUT);
+  
+  stopMotors();
+  Serial.println("Simple Line Follower Ready!");
+  delay(2000);
+}
+
+void loop() {
+  // Read sensors (0 = WHITE detected, 1 = DARK/nothing)
+  int leftValue = digitalRead(LEFT_SENSOR);
+  int rightValue = digitalRead(RIGHT_SENSOR);
+  
+  bool leftOnWhite = (leftValue == 0);
+  bool rightOnWhite = (rightValue == 0);
+  
+  // Debug
+  Serial.print("L:");
+  Serial.print(leftOnWhite ? "W" : "D");
+  Serial.print(" R:");
+  Serial.print(rightOnWhite ? "W" : "D");
+  Serial.print(" -> ");
+  
+  // ========== SIMPLE LOGIC - Think Millisecond by Millisecond ==========
+  
+  if (leftOnWhite && rightOnWhite) {
+    // Case 1: BOTH sensors see white
+    // Robot is CENTERED on tape
+    // Action: Go STRAIGHT
+    Serial.println("Both on white -> GO STRAIGHT");
+    goStraight();
+  }
+  
+  else if (!leftOnWhite && rightOnWhite) {
+    // Case 2: LEFT sensor left the white tape (sees dark)
+    //         RIGHT sensor still on white
+    // This means: Robot is veering LEFT (off the left edge)
+    // Action: Turn RIGHT to get left sensor back onto white
+    Serial.println("Left OFF, Right ON -> TURN RIGHT");
+    turnRight();
+  }
+  
+  else if (leftOnWhite && !rightOnWhite) {
+    // Case 3: RIGHT sensor left the white tape (sees dark)
+    //         LEFT sensor still on white
+    // This means: Robot is veering RIGHT (off the right edge)
+    // Action: Turn LEFT to get right sensor back onto white
+    Serial.println("Left ON, Right OFF -> TURN LEFT");
+    turnLeft();
+  }
+  
+  else {
+    // Case 4: BOTH sensors off white (both see dark)
+    // Robot completely lost the tape
+    // Action: Go straight slowly to search for tape
+    Serial.println("Both OFF -> SEARCH");
+    goStraight();  // Or implement search pattern
+  }
+  
+  delay(50);  // Check sensors every 50ms
+}
+
+// ========== MOTOR FUNCTIONS ==========
+
+void goStraight() {
+  // Both wheels same speed forward
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, forwardSpeed);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, forwardSpeed);
+}
+
+void turnRight() {
+  // To turn right: slow down RIGHT wheel, keep LEFT wheel fast
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, forwardSpeed);  // Left wheel FAST
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, turnSpeed);     // Right wheel SLOW
+}
+
+void turnLeft() {
+  // To turn left: slow down LEFT wheel, keep RIGHT wheel fast
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, turnSpeed);     // Left wheel SLOW
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, forwardSpeed);  // Right wheel FAST
+}
+
+void stopMotors() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
