@@ -1,0 +1,190 @@
+// -------------------- IR Sensor Pins --------------------
+#define IR_LEFT 0
+#define IR_MIDDLE 2
+#define IR_RIGHT 1
+
+// -------------------- Motor Pins --------------------
+#define enA 9      // Left motor speed control
+#define in1 8      // Left motor direction 1
+#define in2 7      // Left motor direction 2
+#define enB 6      // Right motor speed control  
+#define in3 5      // Right motor direction 1
+#define in4 4      // Right motor direction 2
+
+// -------------------- Variables --------------------
+int baseSpeed = 100;        // Slower base speed for better control
+int turnSpeed = 60;        // Turning speed
+int sharpTurnSpeed = 40;   // Slower for sharp corrections
+int lastDirection = 0;     // -1 left, 0 straight, 1 right
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Motor pins setup
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // IR sensor setup
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_MIDDLE, INPUT);
+  pinMode(IR_RIGHT, INPUT);
+  
+  stopMotors();
+  Serial.println("Improved Line Following Robot Ready!");
+  delay(2000);
+}
+
+void loop() {
+  // Read all sensors (0 = on line, 1 = off line)
+  int left = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right = digitalRead(IR_RIGHT);
+  
+  bool leftOnLine = (left == 0);
+  bool middleOnLine = (middle == 0);
+  bool rightOnLine = (right == 0);
+  
+  // Debug output
+  Serial.print("L:");
+  Serial.print(left);
+  Serial.print(" M:");
+  Serial.print(middle);
+  Serial.print(" R:");
+  Serial.print(right);
+  Serial.print(" LastDir:");
+  Serial.println(lastDirection);
+  
+  // IMPROVED DECISION LOGIC FOR FRONT SENSORS:
+  
+  // Case 1: Perfectly on track
+  if (middleOnLine && !leftOnLine && !rightOnLine) {
+    Serial.println("Perfect - Straight");
+    driveForward();
+    lastDirection = 0;
+  }
+  // Case 2: Slightly off to the right
+  else if (leftOnLine && !middleOnLine && !rightOnLine) {
+    Serial.println("Slight right deviation - Gentle left");
+    gentleLeft();
+    lastDirection = -1;
+  }
+  // Case 3: Slightly off to the left
+  else if (rightOnLine && !middleOnLine && !leftOnLine) {
+    Serial.println("Slight left deviation - Gentle right");
+    gentleRight();
+    lastDirection = 1;
+  }
+  // Case 4: Major deviation - need sharper turn
+  else if (leftOnLine && middleOnLine && !rightOnLine) {
+    Serial.println("Major left - Sharp right");
+    sharpRight();
+    lastDirection = 1;
+  }
+  else if (rightOnLine && middleOnLine && !leftOnLine) {
+    Serial.println("Major right - Sharp left");
+    sharpLeft();
+    lastDirection = -1;
+  }
+  // Case 5: All sensors on line (intersection or wide line)
+  else if (leftOnLine && middleOnLine && rightOnLine) {
+    Serial.println("Intersection - Continue straight");
+    driveForward();
+    lastDirection = 0;
+  }
+  // Case 6: Lost line - use last known direction
+  else if (!leftOnLine && !middleOnLine && !rightOnLine) {
+    Serial.println("Lost line - Searching");
+    searchLine(lastDirection);
+  }
+  
+  delay(50);
+}
+
+// -------------------- IMPROVED MOTOR CONTROL --------------------
+
+void driveForward() {
+  // Both motors forward at same speed
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed);
+}
+
+void gentleLeft() {
+  // Gentle left turn: slow right motor slightly
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed - 10);  // Left motor slightly slower
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed);       // Right motor normal
+}
+
+void gentleRight() {
+  // Gentle right turn: slow left motor slightly
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);       // Left motor normal
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed - 10);  // Right motor slightly slower
+}
+
+void sharpLeft() {
+  // Sharp left turn: right motor forward, left motor slow/stop
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, sharpTurnSpeed);  // Left motor slow
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed);       // Right motor normal
+}
+
+void sharpRight() {
+  // Sharp right turn: left motor forward, right motor slow/stop
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);       // Left motor normal
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, sharpTurnSpeed);  // Right motor slow
+}
+
+void searchLine(int lastDir) {
+  // When line is lost, turn in the last direction we were going
+  if (lastDir == -1) {  // Was turning left
+    gentleRight();       // Try turning right to find line
+  } else if (lastDir == 1) {  // Was turning right
+    gentleLeft();        // Try turning left to find line
+  } else {
+    // Was going straight - slow down and continue
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+    analogWrite(enA, baseSpeed/2);
+    
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    analogWrite(enB, baseSpeed/2);
+  }
+}
+
+void stopMotors() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
