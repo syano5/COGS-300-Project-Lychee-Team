@@ -64,12 +64,12 @@ void loop() {
   else if (leftOnLine && !middleOnLine) {
     // Left sensor sees line - steer right gently
     Serial.println("Line on left - steering right");
-    steerRight();
+    steerLeft();
   }
   else if (rightOnLine && !middleOnLine) {
     // Right sensor sees line - steer left gently
     Serial.println("Line on right - steering left");
-    steerLeft();
+    steerRight();
   }
   else {
     // No sensors see line - stop or keep last direction
