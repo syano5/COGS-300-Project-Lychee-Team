@@ -1,0 +1,150 @@
+#include <Servo.h>
+// -------------------- IR Sensor Pins --------------------
+#define IR_LEFT 0
+#define IR_MIDDLE 2
+#define IR_RIGHT 1
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+// -------------------- Variables --------------------
+int motorSpeed = 100;
+int turnSpeed = 60;  // Speed for gentle steering
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Motor pins setup
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // IR sensor setup
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_MIDDLE, INPUT);
+  pinMode(IR_RIGHT, INPUT);
+  
+  stopMotors();
+  Serial.println("3-Sensor Line Following Robot Ready!");
+  delay(2000);
+}
+
+void loop() {
+  // Read all sensors (0 = on line, 1 = off line - adjust if needed)
+  int left = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right = digitalRead(IR_RIGHT);
+  
+  bool leftOnLine = (left == 0);
+  bool middleOnLine = (middle == 0);
+  bool rightOnLine = (right == 0);
+  
+  // Decision logic
+  if (leftOnLine && middleOnLine && !rightOnLine) {
+    // Left turn corner detected
+    Serial.println("LEFT CORNER - Turning 90° left");
+    turn90Left();
+  }
+  else if (rightOnLine && middleOnLine && !leftOnLine) {
+    // Right turn corner detected
+    Serial.println("RIGHT CORNER - Turning 90° right");
+    turn90Right();
+  }
+  else if (middleOnLine) {
+    // Middle sensor on line - go straight
+    Serial.println("On line - straight");
+    driveForward();
+  }
+  else if (leftOnLine && !middleOnLine) {
+    // Left sensor sees line - steer right gently
+    Serial.println("Line on left - steering right");
+    steerRight();
+  }
+  else if (rightOnLine && !middleOnLine) {
+    // Right sensor sees line - steer left gently
+    Serial.println("Line on right - steering left");
+    steerLeft();
+  }
+  else {
+    // No sensors see line - stop or keep last direction
+    Serial.println("Lost line - stopping");
+    stopMotors();
+  }
+  
+  delay(50);
+}
+
+// -------------------- Motor Control Functions --------------------
+void driveForward() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, motorSpeed);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, motorSpeed);
+}
+
+void steerLeft() {
+  // Slow down right motor to steer left gently
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, motorSpeed);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, turnSpeed);
+}
+
+void steerRight() {
+  // Slow down left motor to steer right gently
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, turnSpeed);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, motorSpeed);
+}
+
+void turn90Left() {
+  // Sharp left turn
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, motorSpeed);
+  
+  delay(500);  // Adjust time for 90° turn
+}
+
+void turn90Right() {
+  // Sharp right turn
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, motorSpeed);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+  
+  delay(500);  // Adjust time for 90° turn
+}
+
+void stopMotors() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
