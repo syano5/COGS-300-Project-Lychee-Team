@@ -1,86 +1,67 @@
 #include <Servo.h>
 
-// -------------------- Servo Setup --------------------
-#define SERVO_PIN 3
-Servo scanServo;
-int servoPos = 90;
-int servoIncrement = 5;
-int sweepDelay = 15;
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+
+// -------------------- IR Sensor Pins (Line Following) --------------------
+#define IR_LEFT 0
+#define IR_MIDDLE 2
+#define IR_RIGHT 1
 
 // -------------------- Ultrasonic Pins --------------------
-#define TRIG_PIN 10
-#define ECHO_PIN 11
+#define TRIG_PIN_FRONT 10
+#define ECHO_PIN_FRONT 11
+#define TRIG_PIN_SIDE 12
+#define ECHO_PIN_SIDE 13
 
-// -------------------- Object Detection Sensor Pins --------------------
-#define OBJECT_SENSOR_LEFT A0    // Left object sensor (analog)
-#define OBJECT_SENSOR_RIGHT A1   // Right object sensor (analog) 
-#define OBJECT_SENSOR_FRONT A2   // Front object sensor (analog)
+// -------------------- Servo --------------------
+#define SERVO_PIN 3
+Servo servo_9;
 
-// -------------------- Arena Boundary Sensors --------------------
-#define TAPE_SENSOR_LEFT 0       // Left tape detection
-#define TAPE_SENSOR_RIGHT 1      // Right tape detection
-#define TAPE_SENSOR_FRONT 2      // Front tape detection
+// -------------------- Robot Modes --------------------
+enum Mode { LINE_FOLLOW, WALL_FOLLOW, OBJECT_TRACK };
+Mode currentMode = LINE_FOLLOW;
 
-// -------------------- Motor Pins --------------------
-#define enA 9      // Left motor speed control
-#define in1 8      // Left motor direction 1
-#define in2 7      // Left motor direction 2
-#define enB 6      // Right motor speed control  
-#define in3 5      // Right motor direction 1
-#define in4 4      // Right motor direction 2
-
-// -------------------- Constants --------------------
-const float ULTRASONIC_DETECTION_RANGE = 150.0; // cm (~5 ft)
-const float ULTRASONIC_CLOSE_RANGE = 40.0;      // cm for close approach
-const float ULTRASONIC_STOP_DISTANCE = 25.0;    // cm (~10 inches)
-
-// -------------------- Variables --------------------
+// -------------------- Line Following Variables (from Document 5) --------------------
 int baseSpeed = 100;
-int searchSpeed = 80;
-int turnSpeed = 70;
+int turnSpeed = 60;
+int sharpTurnSpeed = 40;
+int lastDirection = 0;
+unsigned long lineOffTime = 0;
+const unsigned long LINE_LOST_TIMEOUT = 3000;
 
-// Object tracking states
-enum TrackingState {
-  SEARCHING,           // Looking for object with servo sweep
-  ORIENTING,           // Turning to face detected object
-  TRACKING,            // Following object (IR sensors)
-  APPROACHING,         // Close to object (ultrasonic guidance)
-  TOUCHING,            // Making contact
-  AVOIDING_TAPE,       // Backing from boundary
-  RECOVERY             // Lost object recovery
-};
+// -------------------- Wall Following Variables (from Document 6) --------------------
+const float SET_POINT_WALL = 20.0;
+const float Kp_WALL = 6.0;
+const int WALL_FORWARD_SPEED = 80;
+unsigned long wallLostTime = 0;
+const unsigned long WALL_LOST_TIMEOUT = 3000;
 
-TrackingState currentState = SEARCHING;
+// -------------------- Object Tracking Variables (from Document 4) --------------------
+const float DETECTION_RANGE = 150.0;
+const float STOP_DISTANCE = 30.0;
+const int BASE_SPEED = 90;
+const int TURN_SPEED = 80;
+const int SWEEP_DELAY = 15;
+const int SWEEP_STEP = 5;
 
-// Object detection thresholds
-int objectThreshold = 500;       // Analog reading threshold for IR object detection
-int closeObjectThreshold = 700;  // Very close to object (IR)
-int tapeThreshold = 200;         // Digital threshold for tape detection
-
-// Search behavior
-unsigned long lastObjectSeen = 0;
-int searchDirection = 1;         // 1 = right, -1 = left
-int searchPattern = 0;           // 0 = spiral, 1 = zigzag
-int recoveryAttempts = 0;
-
-// Servo scanning variables
-bool objectFoundByUltrasonic = false;
-int detectedObjectAngle = 90;
-float detectedObjectDistance = 0;
-
-// Tracking variables
-int lastDirection = 0;           // -1 left, 0 straight, 1 right
-int lastObjectPosition = 0;      // -1 left, 0 center, 1 right
+enum ObjectState { SWEEP, ORIENT, APPROACH, PAUSE };
+ObjectState objectState = SWEEP;
+int pos = 90;
+int sweepDirection = 1;
+int objectAngle = 90;
+float lastDistance = -1;
 
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
   
-  // Servo setup
-  scanServo.attach(SERVO_PIN, 500, 2500);
-  scanServo.write(90);
-  
-  // Motor pins setup
+  // Motor pins
   pinMode(enA, OUTPUT);
   pinMode(in1, OUTPUT);
   pinMode(in2, OUTPUT);
@@ -88,482 +69,444 @@ void setup() {
   pinMode(in3, OUTPUT);
   pinMode(in4, OUTPUT);
   
-  // Ultrasonic setup
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
+  // IR sensors
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_MIDDLE, INPUT);
+  pinMode(IR_RIGHT, INPUT);
   
-  // Sensor setup
-  pinMode(OBJECT_SENSOR_LEFT, INPUT);
-  pinMode(OBJECT_SENSOR_RIGHT, INPUT);
-  pinMode(OBJECT_SENSOR_FRONT, INPUT);
-  pinMode(TAPE_SENSOR_LEFT, INPUT);
-  pinMode(TAPE_SENSOR_RIGHT, INPUT);
-  pinMode(TAPE_SENSOR_FRONT, INPUT);
+  // Ultrasonic
+  pinMode(TRIG_PIN_FRONT, OUTPUT);
+  pinMode(ECHO_PIN_FRONT, INPUT);
+  pinMode(TRIG_PIN_SIDE, OUTPUT);
+  pinMode(ECHO_PIN_SIDE, INPUT);
   
-  stopMotors();
-  Serial.println("Servo-Enhanced Object Tracking Robot Ready!");
+  // Servo
+  servo_9.attach(SERVO_PIN, 500, 2500);
+  servo_9.write(90);
+  
+  stopRobot();
+  
+  Serial.println("Tournament Robot Ready!");
+  Serial.println("Starting: LINE FOLLOWING MODE");
   delay(2000);
-}
-
-// -------------------- Ultrasonic Distance Measurement --------------------
-float getUltrasonicDistance() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  
-  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // timeout after 30ms
-  if (duration == 0) return -1;
-  return duration * 0.034 / 2.0;
 }
 
 // -------------------- Main Loop --------------------
 void loop() {
-  // Read all sensors
-  int objectLeft = analogRead(OBJECT_SENSOR_LEFT);
-  int objectRight = analogRead(OBJECT_SENSOR_RIGHT);
-  int objectFront = analogRead(OBJECT_SENSOR_FRONT);
+  // Read sensors
+  int left = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right = digitalRead(IR_RIGHT);
+  float wallDist = getDistance(TRIG_PIN_SIDE, ECHO_PIN_SIDE);
   
-  bool tapeLeft = digitalRead(TAPE_SENSOR_LEFT) < tapeThreshold;
-  bool tapeRight = digitalRead(TAPE_SENSOR_RIGHT) < tapeThreshold;
-  bool tapeFront = digitalRead(TAPE_SENSOR_FRONT) < tapeThreshold;
+  // Check mode transitions
+  checkModeSwitch(left, middle, right, wallDist);
   
-  float ultrasonicDist = getUltrasonicDistance();
-  
-  // Debug output
-  Serial.print("State:");
-  Serial.print(currentState);
-  Serial.print(" Servo:");
-  Serial.print(servoPos);
-  Serial.print("° US:");
-  Serial.print(ultrasonicDist);
-  Serial.print("cm L:");
-  Serial.print(objectLeft);
-  Serial.print(" R:");
-  Serial.print(objectRight);
-  Serial.print(" F:");
-  Serial.print(objectFront);
-  Serial.print(" Tape L:");
-  Serial.print(tapeLeft);
-  Serial.print(" R:");
-  Serial.print(tapeRight);
-  Serial.print(" F:");
-  Serial.println(tapeFront);
-
-  // State machine for object tracking
-  switch(currentState) {
-    
-    case SEARCHING:
-      handleSearching(objectLeft, objectRight, objectFront, tapeLeft, tapeRight, tapeFront, ultrasonicDist);
+  // Execute current mode
+  switch (currentMode) {
+    case LINE_FOLLOW:
+      executeLineFollow(left, middle, right);
       break;
-      
-    case ORIENTING:
-      handleOrienting();
+    case WALL_FOLLOW:
+      executeWallFollow(wallDist);
       break;
-      
-    case TRACKING:
-      handleTracking(objectLeft, objectRight, objectFront, tapeLeft, tapeRight, tapeFront, ultrasonicDist);
-      break;
-      
-    case APPROACHING:
-      handleApproaching(objectLeft, objectRight, objectFront, tapeLeft, tapeRight, tapeFront, ultrasonicDist);
-      break;
-      
-    case AVOIDING_TAPE:
-      handleAvoidingTape(tapeLeft, tapeRight, tapeFront, objectLeft, objectRight, objectFront);
-      break;
-      
-    case RECOVERY:
-      handleRecovery(objectLeft, objectRight, objectFront, tapeLeft, tapeRight, tapeFront, ultrasonicDist);
-      break;
-      
-    case TOUCHING:
-      handleTouching();
+    case OBJECT_TRACK:
+      executeObjectTrack();
       break;
   }
   
   delay(50);
 }
 
-// -------------------- STATE HANDLERS --------------------
-
-void handleSearching(int objLeft, int objRight, int objFront, bool tapeL, bool tapeR, bool tapeF, float usDist) {
-  // Check for tape first
-  if (tapeL || tapeR || tapeF) {
-    currentState = AVOIDING_TAPE;
-    return;
-  }
+// -------------------- Mode Switching Logic --------------------
+void checkModeSwitch(int left, int middle, int right, float wallDist) {
+  bool allIRoff = (left == 1 && middle == 1 && right == 1);
+  bool anyIRon = (left == 0 || middle == 0 || right == 0);
+  bool wallDetected = (wallDist > 0 && wallDist < 100);
   
-  // Check IR sensors for nearby objects
-  if (objLeft > objectThreshold || objRight > objectThreshold || objFront > objectThreshold) {
-    currentState = TRACKING;
-    lastObjectSeen = millis();
-    recoveryAttempts = 0;
-    scanServo.write(90); // Center servo for tracking
-    Serial.println("Object found by IR! Switching to TRACKING");
-    return;
-  }
-  
-  // Perform servo sweep with ultrasonic
-  servoSweepAndDetect(usDist);
-  
-  // If object found by ultrasonic, orient toward it
-  if (objectFoundByUltrasonic) {
-    currentState = ORIENTING;
-    Serial.println("Object found by ultrasonic! Switching to ORIENTING");
-    return;
-  }
-  
-  // Otherwise continue search pattern
-  if (searchPattern == 0) {
-    spiralSearch();
-  } else {
-    zigzagSearch();
-  }
-}
-
-void servoSweepAndDetect(float distance) {
-  static int direction = 1;
-  static unsigned long lastSweepTime = 0;
-  
-  // Only update servo position periodically to avoid blocking
-  if (millis() - lastSweepTime >= sweepDelay) {
-    scanServo.write(servoPos);
-    lastSweepTime = millis();
-    
-    if (distance > 0) {
-      Serial.print("  Sweep angle ");
-      Serial.print(servoPos);
-      Serial.print("° | Distance: ");
-      Serial.print(distance);
-      Serial.println(" cm");
-    }
-    
-    // Check if object detected within range
-    if (distance > 0 && distance <= ULTRASONIC_DETECTION_RANGE) {
-      Serial.print(">>> Ultrasonic detected object at ");
-      Serial.print(distance);
-      Serial.print(" cm | angle ");
-      Serial.println(servoPos);
-      objectFoundByUltrasonic = true;
-      detectedObjectAngle = servoPos;
-      detectedObjectDistance = distance;
-      return;
-    }
-    
-    // Continue sweeping
-    servoPos += direction * servoIncrement;
-    if (servoPos >= 180 || servoPos <= 0) {
-      direction = -direction;
-    }
-  }
-}
-
-void handleOrienting() {
-  // Turn robot to face the detected object
-  int turnAmount = detectedObjectAngle - 90;
-  
-  Serial.print("Orienting toward angle: ");
-  Serial.print(detectedObjectAngle);
-  Serial.print(" (turn amount: ");
-  Serial.print(turnAmount);
-  Serial.println("°)");
-  
-  if (abs(turnAmount) > 10) {
-    if (turnAmount > 0) {
-      // Turn right
-      sharpRight();
-      delay(abs(turnAmount) * 10); // Adjust timing as needed
-    } else {
-      // Turn left
-      sharpLeft();
-      delay(abs(turnAmount) * 10);
-    }
-  }
-  
-  stopMotors();
-  scanServo.write(90); // Center ultrasonic forward
-  delay(300);
-  
-  // Reset flag and transition to tracking
-  objectFoundByUltrasonic = false;
-  currentState = TRACKING;
-  lastObjectSeen = millis();
-  Serial.println("Orientation complete. Switching to TRACKING");
-}
-
-void handleTracking(int objLeft, int objRight, int objFront, bool tapeL, bool tapeR, bool tapeF, float usDist) {
-  // Emergency tape avoidance
-  if (tapeL || tapeR || tapeF) {
-    currentState = AVOIDING_TAPE;
-    return;
-  }
-  
-  // Use ultrasonic for approaching if object is close
-  if (usDist > 0 && usDist <= ULTRASONIC_CLOSE_RANGE) {
-    currentState = APPROACHING;
-    Serial.println("Object in ultrasonic close range! Switching to APPROACHING");
-    return;
-  }
-  
-  // Check if IR detects very close object
-  if (objFront > closeObjectThreshold) {
-    currentState = APPROACHING;
-    Serial.println("IR detects close object! Switching to APPROACHING");
-    return;
-  }
-  
-  // Check if object lost
-  if (objLeft < objectThreshold && objRight < objectThreshold && objFront < objectThreshold) {
-    if (millis() - lastObjectSeen > 2000) { // Lost for 2 seconds
-      currentState = RECOVERY;
-      Serial.println("Object lost! Switching to RECOVERY");
-    } else {
-      // Temporary loss - continue in last direction
-      if (lastDirection == -1) {
-        gentleLeft();
-      } else if (lastDirection == 1) {
-        gentleRight();
-      } else {
-        driveForward();
+  if (currentMode == LINE_FOLLOW) {
+    // Line lost for 3 seconds -> switch to wall following
+    if (allIRoff) {
+      if (lineOffTime == 0) lineOffTime = millis();
+      else if (millis() - lineOffTime > LINE_LOST_TIMEOUT) {
+        Serial.println("\n>>> LINE LOST! Switching to WALL FOLLOWING");
+        currentMode = WALL_FOLLOW;
+        lineOffTime = 0;
       }
-      Serial.println("Tracking: Temporary loss - continuing last direction");
+    } else {
+      lineOffTime = 0;
     }
-    return;
   }
+  else if (currentMode == WALL_FOLLOW) {
+    // Wall lost for 3 seconds -> switch to object tracking
+    if (!wallDetected) {
+      if (wallLostTime == 0) wallLostTime = millis();
+      else if (millis() - wallLostTime > WALL_LOST_TIMEOUT) {
+        Serial.println("\n>>> WALL LOST! Switching to OBJECT TRACKING");
+        currentMode = OBJECT_TRACK;
+        wallLostTime = 0;
+        objectState = SWEEP;
+        pos = 90;
+      }
+    } else {
+      wallLostTime = 0;
+    }
+    // Line detected -> back to line following
+    if (anyIRon) {
+      Serial.println("\n>>> LINE DETECTED! Switching to LINE FOLLOWING");
+      currentMode = LINE_FOLLOW;
+      lineOffTime = 0;
+    }
+  }
+  else if (currentMode == OBJECT_TRACK) {
+    // Line detected -> back to line following
+    if (anyIRon) {
+      Serial.println("\n>>> LINE DETECTED! Switching to LINE FOLLOWING");
+      currentMode = LINE_FOLLOW;
+      objectState = SWEEP;
+    }
+  }
+}
+
+// -------------------- LINE FOLLOWING (from Document 5) --------------------
+void executeLineFollow(int left, int middle, int right) {
+  bool leftOnLine = (left == 0);
+  bool middleOnLine = (middle == 0);
+  bool rightOnLine = (right == 0);
   
-  // Object tracking logic using IR sensors
-  lastObjectSeen = millis();
+  Serial.print("L:");
+  Serial.print(left);
+  Serial.print(" M:");
+  Serial.print(middle);
+  Serial.print(" R:");
+  Serial.print(right);
+  Serial.print(" -> ");
   
-  if (objFront > objectThreshold && objLeft > objectThreshold && objRight > objectThreshold) {
-    // Object centered - move forward
+  // Perfect on track
+  if (middleOnLine && !leftOnLine && !rightOnLine) {
+    Serial.println("Straight");
     driveForward();
     lastDirection = 0;
-    Serial.println("Tracking: Centered - Forward");
   }
-  else if (objLeft > objRight && objLeft > objectThreshold) {
-    // Object on left
+  // Slightly off to right
+  else if (leftOnLine && !middleOnLine && !rightOnLine) {
+    Serial.println("Gentle left");
     gentleLeft();
     lastDirection = -1;
-    Serial.println("Tracking: Object left - Gentle left");
   }
-  else if (objRight > objLeft && objRight > objectThreshold) {
-    // Object on right
+  // Slightly off to left
+  else if (rightOnLine && !middleOnLine && !leftOnLine) {
+    Serial.println("Gentle right");
     gentleRight();
     lastDirection = 1;
-    Serial.println("Tracking: Object right - Gentle right");
   }
-  else if (objFront > objectThreshold) {
-    // Only front sensor
-    driveForward();
-    lastDirection = 0;
-    Serial.println("Tracking: Front only - Forward");
-  }
-}
-
-void handleApproaching(int objLeft, int objRight, int objFront, bool tapeL, bool tapeR, bool tapeF, float usDist) {
-  if (tapeL || tapeR || tapeF) {
-    currentState = AVOIDING_TAPE;
-    return;
-  }
-  
-  // Use ultrasonic for precise distance control
-  if (usDist > 0 && usDist <= ULTRASONIC_STOP_DISTANCE) {
-    currentState = TOUCHING;
-    Serial.print("TOUCHING OBJECT! Distance: ");
-    Serial.print(usDist);
-    Serial.println(" cm - SUCCESS!");
-    stopMotors();
-    return;
-  }
-  
-  // Check if object lost
-  if (usDist < 0 || usDist > ULTRASONIC_DETECTION_RANGE) {
-    Serial.println("Lost object during approach! Returning to RECOVERY");
-    currentState = RECOVERY;
-    return;
-  }
-  
-  // Proportional speed control based on distance
-  float error = usDist - ULTRASONIC_STOP_DISTANCE;
-  int approachSpeed = constrain(baseSpeed/2 + (int)(error * 2), 40, baseSpeed);
-  
-  // Use IR sensors for lateral correction
-  if (objLeft > objRight && objLeft > objectThreshold) {
-    // Drift left slightly
-    controlMotor(approachSpeed - 10, approachSpeed);
-  } else if (objRight > objLeft && objRight > objectThreshold) {
-    // Drift right slightly
-    controlMotor(approachSpeed, approachSpeed - 10);
-  } else {
-    // Go straight
-    controlMotor(approachSpeed, approachSpeed);
-  }
-  
-  Serial.print("Approaching: Distance: ");
-  Serial.print(usDist);
-  Serial.print(" cm | Speed: ");
-  Serial.println(approachSpeed);
-}
-
-void handleAvoidingTape(bool tapeL, bool tapeR, bool tapeF, int objLeft, int objRight, int objFront) {
-  Serial.println("Avoiding tape boundary!");
-  
-  // Back up first
-  driveBackward();
-  delay(500);
-  stopMotors();
-  
-  // Turn away from tape
-  if (tapeL) {
+  // Major deviation
+  else if (leftOnLine && middleOnLine && !rightOnLine) {
+    Serial.println("Sharp right");
     sharpRight();
     lastDirection = 1;
-    Serial.println("Tape left - Turning right");
-  } 
-  else if (tapeR) {
+  }
+  else if (rightOnLine && middleOnLine && !leftOnLine) {
+    Serial.println("Sharp left");
     sharpLeft();
     lastDirection = -1;
-    Serial.println("Tape right - Turning left");
   }
-  else if (tapeF) {
-    if (random(2) == 0) {
-      sharpLeft();
-      lastDirection = -1;
-    } else {
-      sharpRight();
-      lastDirection = 1;
+  // Intersection
+  else if (leftOnLine && middleOnLine && rightOnLine) {
+    Serial.println("Intersection - Continue");
+    driveForward();
+    lastDirection = 0;
+  }
+  // Lost line
+  else if (!leftOnLine && !middleOnLine && !rightOnLine) {
+    Serial.println("Lost line - Searching");
+    searchLine(lastDirection);
+  }
+}
+
+void driveForward() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed);
+}
+
+void gentleLeft() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed - 20);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed);
+}
+
+void gentleRight() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed - 20);
+}
+
+void sharpLeft() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, sharpTurnSpeed);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, baseSpeed);
+}
+
+void sharpRight() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, sharpTurnSpeed);
+}
+
+void searchLine(int lastDir) {
+  if (lastDir == -1) {
+    gentleRight();
+  } else if (lastDir == 1) {
+    gentleLeft();
+  } else {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+    analogWrite(enA, baseSpeed/2);
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    analogWrite(enB, baseSpeed/2);
+  }
+}
+
+// -------------------- WALL FOLLOWING (from Document 6) --------------------
+void executeWallFollow(float wallDistance) {
+  if (wallDistance < 0 || wallDistance > 100) {
+    stopRobot();
+    Serial.println("Wall lost - no reading");
+    return;
+  }
+  
+  // P-controller
+  float error = wallDistance - SET_POINT_WALL;
+  float steeringCorrection = Kp_WALL * error;
+  
+  int rightMotorSpeed = WALL_FORWARD_SPEED - steeringCorrection;
+  int leftMotorSpeed = WALL_FORWARD_SPEED + steeringCorrection;
+  
+  rightMotorSpeed = constrain(rightMotorSpeed, 30, 150);
+  leftMotorSpeed = constrain(leftMotorSpeed, 30, 150);
+  
+  controlMotor(rightMotorSpeed, leftMotorSpeed);
+  
+  Serial.print("Wall: ");
+  Serial.print(wallDistance);
+  Serial.print("cm, Err:");
+  Serial.print(error);
+  Serial.print(", R:");
+  Serial.print(rightMotorSpeed);
+  Serial.print(" L:");
+  Serial.println(leftMotorSpeed);
+}
+
+// -------------------- OBJECT TRACKING (from Document 4) --------------------
+void executeObjectTrack() {
+  switch (objectState) {
+    case SWEEP:
+      performSweep();
+      break;
+    case ORIENT:
+      orientToObject();
+      break;
+    case APPROACH:
+      approachObject();
+      break;
+    case PAUSE:
+      pauseThenSweep();
+      break;
+  }
+}
+
+void performSweep() {
+  servo_9.write(pos);
+  delay(SWEEP_DELAY);
+  
+  float distance = getDistance(TRIG_PIN_FRONT, ECHO_PIN_FRONT);
+  
+  Serial.print("Sweep: ");
+  Serial.print(pos);
+  Serial.print("° | Distance: ");
+  if (distance < 0) {
+    Serial.println("No reading");
+  } else {
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+  
+  // Object detected
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.println(">>> OBJECT DETECTED!");
+    Serial.print("    Angle: ");
+    Serial.print(pos);
+    Serial.print("° | Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+    
+    objectAngle = pos;
+    lastDistance = distance;
+    objectState = ORIENT;
+    return;
+  }
+  
+  // Continue sweeping
+  pos += (sweepDirection * SWEEP_STEP);
+  if (pos >= 180) {
+    pos = 180;
+    sweepDirection = -1;
+  } else if (pos <= 0) {
+    pos = 0;
+    sweepDirection = 1;
+  }
+}
+
+void orientToObject() {
+  Serial.print(">>> ORIENTING to face object at ");
+  Serial.print(objectAngle);
+  Serial.println("°");
+  
+  int angleDiff = objectAngle - 90;
+  
+  if (abs(angleDiff) < 15) {
+    Serial.println(">>> Close enough to center! Moving forward...");
+    stopRobot();
+    servo_9.write(90);
+    delay(300);
+    objectState = APPROACH;
+    return;
+  }
+  
+  if (angleDiff < 0) {
+    Serial.print(">>> Turning LEFT by ");
+    Serial.print(abs(angleDiff));
+    Serial.println(" degrees");
+    turnLeft(TURN_SPEED);
+  } else {
+    Serial.print(">>> Turning RIGHT by ");
+    Serial.print(angleDiff);
+    Serial.println(" degrees");
+    turnRight(TURN_SPEED);
+  }
+  
+  int turnTime = abs(angleDiff) * 10;
+  delay(turnTime);
+  
+  stopRobot();
+  delay(300);
+  
+  servo_9.write(90);
+  delay(300);
+  
+  float distance = getDistance(TRIG_PIN_FRONT, ECHO_PIN_FRONT);
+  Serial.print(">>> Verifying object at center: ");
+  if (distance < 0) {
+    Serial.println("No reading");
+  } else {
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+  
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.println(">>> Object confirmed! Approaching...");
+    objectState = APPROACH;
+  } else {
+    Serial.println(">>> Object not found. Resweeping...");
+    objectState = SWEEP;
+    pos = 60;
+    sweepDirection = 1;
+  }
+}
+
+void approachObject() {
+  servo_9.write(90);
+  delay(100);
+  
+  float distance = getDistance(TRIG_PIN_FRONT, ECHO_PIN_FRONT);
+  
+  Serial.print(">>> APPROACHING | Distance: ");
+  if (distance < 0) {
+    Serial.println("No reading - object lost!");
+    objectState = SWEEP;
+    pos = 90;
+    return;
+  }
+  
+  Serial.print(distance);
+  Serial.println(" cm");
+  
+  if (distance <= STOP_DISTANCE) {
+    Serial.println(">>> ARRIVED! Stopping at target.");
+    stopRobot();
+    delay(2000);
+    
+    Serial.println("\n================================");
+    Serial.println("  TOURNAMENT COMPLETE!");
+    Serial.println("================================");
+    
+    // Celebration
+    for (int i = 0; i < 3; i++) {
+      controlMotor(100, -100);
+      delay(300);
+      stopRobot();
+      delay(300);
     }
-    Serial.println("Tape front - Turning around");
-  }
-  
-  delay(800);
-  stopMotors();
-  
-  // Return to searching
-  currentState = SEARCHING;
-  servoPos = 90; // Reset servo
-  recoveryAttempts++;
-  
-  if (recoveryAttempts > 3) {
-    searchPattern = 1 - searchPattern;
-    recoveryAttempts = 0;
-    Serial.println("Changing search pattern");
-  }
-}
-
-void handleRecovery(int objLeft, int objRight, int objFront, bool tapeL, bool tapeR, bool tapeF, float usDist) {
-  Serial.println("Recovery: Attempting to reacquire object");
-  
-  // Check IR sensors
-  if (objLeft > objectThreshold || objRight > objectThreshold || objFront > objectThreshold) {
-    currentState = TRACKING;
-    lastObjectSeen = millis();
-    Serial.println("Object reacquired by IR! Back to TRACKING");
+    
+    objectState = PAUSE;
     return;
   }
   
-  // Check ultrasonic
-  if (usDist > 0 && usDist <= ULTRASONIC_DETECTION_RANGE) {
-    Serial.println("Object detected by ultrasonic during recovery!");
-    objectFoundByUltrasonic = true;
-    detectedObjectAngle = servoPos;
-    detectedObjectDistance = usDist;
-    currentState = ORIENTING;
+  if (distance > DETECTION_RANGE) {
+    Serial.println(">>> Object out of range. Resuming sweep...");
+    objectState = SWEEP;
+    pos = 90;
     return;
   }
   
-  // Perform servo sweep during recovery
-  servoSweepAndDetect(usDist);
+  Serial.println(">>> Moving forward...");
+  driveForward(BASE_SPEED);
+  delay(1000);
+  stopRobot();
+  delay(500);
   
-  // Systematic recovery search
-  recoverySearch();
-  
-  // Timeout back to searching
-  if (millis() - lastObjectSeen > 5000) {
-    currentState = SEARCHING;
-    servoPos = 90;
-    Serial.println("Recovery timeout, returning to SEARCHING");
-  }
+  Serial.println(">>> Quick sweep to reorient...");
+  objectState = SWEEP;
+  pos = 60;
+  sweepDirection = 1;
 }
 
-void handleTouching() {
-  Serial.println("*** OBJECT TOUCHED - MISSION COMPLETE ***");
-  stopMotors();
-  // Optional: Add celebration routine
+void pauseThenSweep() {
+  Serial.println(">>> Mission complete. Standing by...");
+  stopRobot();
+  // Stay paused
 }
 
-// -------------------- SEARCH PATTERNS --------------------
-
-void spiralSearch() {
-  static unsigned long lastDirectionChange = 0;
-  static int spiralSize = 0;
+// -------------------- Utility Functions --------------------
+float getDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
   
-  if (millis() - lastDirectionChange > 2000) {
-    spiralSize++;
-    searchDirection = -searchDirection;
-    lastDirectionChange = millis();
-  }
+  long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration == 0) return -1;
   
-  // Keep moving during search
-  if (searchDirection == 1) {
-    gentleRight();
-    lastDirection = 1;
-  } else {
-    gentleLeft();
-    lastDirection = -1;
-  }
+  return duration * 0.034 / 2.0;
 }
-
-void zigzagSearch() {
-  static unsigned long lastZigzag = 0;
-  static bool zigRight = true;
-  
-  if (millis() - lastZigzag > 1500) {
-    zigRight = !zigRight;
-    lastZigzag = millis();
-  }
-  
-  // Keep moving during search
-  if (zigRight) {
-    gentleRight();
-    lastDirection = 1;
-  } else {
-    gentleLeft();
-    lastDirection = -1;
-  }
-}
-
-void recoverySearch() {
-  static unsigned long lastRecoveryAction = 0;
-  static int recoveryStep = 0;
-  
-  if (millis() - lastRecoveryAction > 1000) {
-    recoveryStep = (recoveryStep + 1) % 4;
-    lastRecoveryAction = millis();
-  }
-  
-  switch(recoveryStep) {
-    case 0: 
-      driveForward(); 
-      lastDirection = 0;
-      break;
-    case 1: 
-      sharpLeft(); 
-      lastDirection = -1;
-      break;
-    case 2: 
-      driveForward(); 
-      lastDirection = 0;
-      break;
-    case 3: 
-      sharpRight(); 
-      lastDirection = 1;
-      break;
-  }
-}
-
-// -------------------- MOTOR CONTROL FUNCTIONS --------------------
 
 void controlMotor(int motorA_speed, int motorB_speed) {
   if (motorA_speed >= 0) {
@@ -575,7 +518,7 @@ void controlMotor(int motorA_speed, int motorB_speed) {
     motorA_speed = -motorA_speed;
   }
   analogWrite(enA, constrain(motorA_speed, 0, 255));
-
+  
   if (motorB_speed >= 0) {
     digitalWrite(in3, HIGH);
     digitalWrite(in4, LOW);
@@ -587,34 +530,18 @@ void controlMotor(int motorA_speed, int motorB_speed) {
   analogWrite(enB, constrain(motorB_speed, 0, 255));
 }
 
-void driveForward() {
-  controlMotor(baseSpeed, baseSpeed);
+void driveForward(int speed) {
+  controlMotor(speed, speed);
 }
 
-void slowForward() {
-  controlMotor(baseSpeed/2, baseSpeed/2);
+void turnLeft(int speed) {
+  controlMotor(-speed, speed);
 }
 
-void driveBackward() {
-  controlMotor(-baseSpeed/2, -baseSpeed/2);
+void turnRight(int speed) {
+  controlMotor(speed, -speed);
 }
 
-void gentleLeft() {
-  controlMotor(baseSpeed - 20, baseSpeed);
-}
-
-void gentleRight() {
-  controlMotor(baseSpeed, baseSpeed - 20);
-}
-
-void sharpLeft() {
-  controlMotor(-turnSpeed, turnSpeed);
-}
-
-void sharpRight() {
-  controlMotor(turnSpeed, -turnSpeed);
-}
-
-void stopMotors() {
+void stopRobot() {
   controlMotor(0, 0);
 }
