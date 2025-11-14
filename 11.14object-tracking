@@ -1,5 +1,10 @@
 #include <Servo.h>
 
+// -------------------- IR Sensor Pins --------------------
+#define IR_LEFT   A0
+#define IR_MIDDLE A1
+#define IR_RIGHT  A2
+
 // -------------------- Motor Pins --------------------
 #define enA 9
 #define in1 8
@@ -8,216 +13,162 @@
 #define in3 4
 #define in4 5
 
-// -------------------- Ultrasonic Pins --------------------
-#define TRIG_PIN_FRONT 10
-#define ECHO_PIN_FRONT 11
+// -------------------- Motor Polarity --------------------
+bool LEFT_FORWARD_HIGH  = true;
+bool RIGHT_FORWARD_HIGH = false;
 
 // -------------------- Servo --------------------
 #define SERVO_PIN 3
 Servo servo_9;
+int servoPos = 90;         // start centered
+int servoInc = 5;
+int servoDir = 1;
 
-// -------------------- Object Tracking Constants --------------------
-const float DETECTION_RANGE = 150.0;
-const float STOP_DISTANCE   = 30.0;
-const int BASE_SPEED        = 90;
-const int TURN_SPEED        = 80;
-const int SWEEP_DELAY       = 15;
-const int SWEEP_STEP        = 5;
+// -------------------- Object Detection --------------------
+#define TRIG_PIN 10
+#define ECHO_PIN 11
+const float DETECTION_RANGE = 100.0;  // cm
+const float TOUCH_DISTANCE   = 5.0;   // cm (considered "touching" object)
 
-enum ObjectState { SWEEP, ORIENT, APPROACH, PAUSE };
-ObjectState objectState = SWEEP;
-
-int pos = 90;
-int sweepDirection = 1;
+bool objectFound = false;
 int objectAngle = 90;
-float lastDistance = -1;
+
+// -------------------- Speeds --------------------
+int baseSpeed   = 120;
+int gentleDelta = 20;
+int sharpDelta  = 50;
+int lastDir     = 0;
 
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
 
-  pinMode(enA, OUTPUT);
-  pinMode(in1, OUTPUT);
-  pinMode(in2, OUTPUT);
+  // Motors
+  pinMode(enA, OUTPUT); pinMode(in1, OUTPUT); pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT); pinMode(in3, OUTPUT); pinMode(in4, OUTPUT);
 
-  pinMode(enB, OUTPUT);
-  pinMode(in3, OUTPUT);
-  pinMode(in4, OUTPUT);
+  // IR sensors
+  pinMode(IR_LEFT, INPUT); pinMode(IR_MIDDLE, INPUT); pinMode(IR_RIGHT, INPUT);
 
-  pinMode(TRIG_PIN_FRONT, OUTPUT);
-  pinMode(ECHO_PIN_FRONT, INPUT);
-
+  // Ultrasonic servo
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
   servo_9.attach(SERVO_PIN, 500, 2500);
-  servo_9.write(90);
+  servo_9.write(servoPos);
 
-  Serial.println("OBJECT-TRACKING MODE READY");
-  delay(1000);
+  stopMotors();
+  Serial.println("Object Tracking Robot Ready");
+  delay(800);
 }
 
-// -------------------- Main Loop --------------------
-void loop() {
-  switch (objectState) {
-    case SWEEP:     performSweep();     break;
-    case ORIENT:    orientToObject();   break;
-    case APPROACH:  approachObject();   break;
-    case PAUSE:     pauseThenSweep();   break;
-  }
-  delay(30);
-}
-
-// -------------------- OBJECT TRACKING --------------------
-void performSweep() {
-  servo_9.write(pos);
-  delay(SWEEP_DELAY);
-
-  float distance = getDistance();
-
-  Serial.print("Sweep @ ");
-  Serial.print(pos);
-  Serial.print("°  dist=");
-  Serial.println(distance);
-
-  // OBJECT FOUND
-  if (distance > 0 && distance <= DETECTION_RANGE) {
-    objectAngle = pos;
-    lastDistance = distance;
-    Serial.println(">>> OBJECT FOUND!");
-    objectState = ORIENT;
-    return;
-  }
-
-  // continue sweeping
-  pos += sweepDirection * SWEEP_STEP;
-
-  if (pos >= 180) { pos = 180; sweepDirection = -1; }
-  if (pos <= 0)   { pos = 0;   sweepDirection =  1; }
-}
-
-void orientToObject() {
-  int angleDiff = objectAngle - 90;
-
-  Serial.print("Orienting: angleDiff = ");
-  Serial.println(angleDiff);
-
-  if (abs(angleDiff) < 12) {
-    Serial.println(">>> Centered. Approach!");
-    servo_9.write(90);
-    objectState = APPROACH;
-    return;
-  }
-
-  if (angleDiff < 0)
-    turnLeft(TURN_SPEED);
-  else
-    turnRight(TURN_SPEED);
-
-  delay(abs(angleDiff) * 10);
-
-  stopRobot();
-  delay(200);
-  servo_9.write(90);
-  delay(150);
-
-  float d = getDistance();
-  if (d > 0 && d <= DETECTION_RANGE) {
-    objectState = APPROACH;
-    Serial.println(">>> Object confirmed.");
-  } else {
-    Serial.println(">>> Object lost. Resuming sweep...");
-    objectState = SWEEP;
-    pos = 60;
-    sweepDirection = 1;
-  }
-}
-
-void approachObject() {
-  float distance = getDistance();
-
-  Serial.print("Approach dist=");
-  Serial.println(distance);
-
-  if (distance < 0) {
-    Serial.println("Object lost -> resweep");
-    objectState = SWEEP;
-    pos = 90;
-    return;
-  }
-
-  if (distance <= STOP_DISTANCE) {
-    stopRobot();
-    Serial.println(">>> TARGET TOUCH! Tournament complete.");
-    objectState = PAUSE;
-    return;
-  }
-
-  if (distance > DETECTION_RANGE) {
-    Serial.println("Out of range -> sweep");
-    objectState = SWEEP;
-    pos = 90;
-    return;
-  }
-
-  driveForward(BASE_SPEED);
-}
-
-// -------------------- Pause Mode --------------------
-void pauseThenSweep() {
-  stopRobot();
-  Serial.println("Standing by...");
-  delay(1000);
-}
-
-// -------------------- Utilities --------------------
+// -------------------- Distance Measurement --------------------
 float getDistance() {
-  digitalWrite(TRIG_PIN_FRONT, LOW);
+  digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
-  digitalWrite(TRIG_PIN_FRONT, HIGH);
+  digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
-  digitalWrite(TRIG_PIN_FRONT, LOW);
+  digitalWrite(TRIG_PIN, LOW);
 
-  long duration = pulseIn(ECHO_PIN_FRONT, HIGH, 30000);
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
   if (duration == 0) return -1;
   return duration * 0.034 / 2.0;
 }
 
-// Corrected motor directions (your updated version)
-void controlMotor(int leftSpeed, int rightSpeed) {
+// -------------------- IR Tape Avoidance --------------------
+bool onWhiteTape() {
+  int left   = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right  = digitalRead(IR_RIGHT);
+  return (left == HIGH || middle == HIGH || right == HIGH); // HIGH = off black line
+}
 
-  // LEFT MOTOR (A)
-  if (leftSpeed >= 0) {
-    digitalWrite(in1, HIGH);
-    digitalWrite(in2, LOW);
-  } else {
-    digitalWrite(in1, LOW);
-    digitalWrite(in2, HIGH);
-    leftSpeed = -leftSpeed;
+void avoidTape() {
+  int left   = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right  = digitalRead(IR_RIGHT);
+
+  if (middle == HIGH) { driveForward(baseSpeed / 2); }  // slow if uncertain
+  if (left == HIGH)  { gentleRight(); }
+  if (right == HIGH) { gentleLeft(); }
+}
+
+// -------------------- Motor Helpers --------------------
+void setLeftMotor(int pwm);
+void setRightMotor(int pwm);
+void driveForward(int pwm) { setLeftMotor(pwm); setRightMotor(pwm); }
+void stopMotors()          { setLeftMotor(0); setRightMotor(0); }
+void gentleLeft()  { setLeftMotor(baseSpeed - gentleDelta); setRightMotor(baseSpeed + gentleDelta); }
+void gentleRight() { setLeftMotor(baseSpeed + gentleDelta); setRightMotor(baseSpeed - gentleDelta); }
+void sharpLeft()   { setLeftMotor(baseSpeed - sharpDelta);  setRightMotor(baseSpeed + sharpDelta); }
+void sharpRight()  { setLeftMotor(baseSpeed + sharpDelta);  setRightMotor(baseSpeed - sharpDelta); }
+
+// -------------------- Main Loop --------------------
+void loop() {
+  // 1. Sweep to detect object if not found
+  if (!objectFound) {
+    servoPos += servoDir * servoInc;
+    if (servoPos >= 180 || servoPos <= 0) servoDir = -servoDir;
+    servo_9.write(servoPos);
+
+    float dist = getDistance();
+    Serial.print("Sweep Angle: "); Serial.print(servoPos);
+    Serial.print(" | Dist: "); Serial.println(dist);
+
+    if (dist > 0 && dist <= DETECTION_RANGE) {
+      objectFound = true;
+      objectAngle = servoPos;
+      Serial.println(">>> OBJECT FOUND <<<");
+    }
+
+    stopMotors();  // sweep in place
+    delay(50);
+    return;
   }
-  analogWrite(enA, constrain(leftSpeed, 0, 255));
 
-  // RIGHT MOTOR (B) — YOUR FIX APPLIED
-  if (rightSpeed >= 0) {
-    digitalWrite(in3, LOW);
-    digitalWrite(in4, HIGH);
-  } else {
-    digitalWrite(in3, HIGH);
-    digitalWrite(in4, LOW);
-    rightSpeed = -rightSpeed;
+  // 2. Orient toward object
+  int turnAmount = objectAngle - 90;
+  if (abs(turnAmount) > 10) {
+    if (turnAmount > 0) { sharpRight(); } else { sharpLeft(); }
+    delay(abs(turnAmount) * 10); // adjust turning time
+    stopMotors();
   }
-  analogWrite(enB, constrain(rightSpeed, 0, 255));
+
+  // 3. Move forward toward object
+  float distance = getDistance();
+  if (distance > 0 && distance <= TOUCH_DISTANCE) {
+    stopMotors();
+    Serial.println(">>> OBJECT TOUCHED <<<");
+    while(1);  // stop here, task complete
+  }
+
+  // 4. Avoid tape while moving forward
+  if (onWhiteTape()) {
+    Serial.println("!!! TAPE DETECTED - AVOIDING !!!");
+    avoidTape();
+  } else {
+    driveForward(baseSpeed);
+  }
+
+  delay(50);
 }
 
-void driveForward(int speed) {
-  controlMotor(speed, speed);
+// -------------------- Motor Implementation --------------------
+void setLeftMotor(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) { digitalWrite(in1, LOW); digitalWrite(in2, LOW); analogWrite(enA, 0); return; }
+  bool forward = (pwm > 0);
+  bool dirHigh = (forward ? LEFT_FORWARD_HIGH : !LEFT_FORWARD_HIGH);
+  digitalWrite(in1, dirHigh ? HIGH : LOW);
+  digitalWrite(in2, dirHigh ? LOW  : HIGH);
+  analogWrite(enA, abs(pwm));
 }
 
-void turnLeft(int speed) {
-  controlMotor(-speed, speed);
-}
-
-void turnRight(int speed) {
-  controlMotor(speed, -speed);
-}
-
-void stopRobot() {
-  controlMotor(0, 0);
+void setRightMotor(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) { digitalWrite(in3, LOW); digitalWrite(in4, LOW); analogWrite(enB, 0); return; }
+  bool forward = (pwm > 0);
+  bool dirHigh = (forward ? RIGHT_FORWARD_HIGH : !RIGHT_FORWARD_HIGH);
+  digitalWrite(in3, dirHigh ? HIGH : LOW);
+  digitalWrite(in4, dirHigh ? LOW  : HIGH);
+  analogWrite(enB, abs(pwm));
 }
