@@ -9,9 +9,9 @@
 #define in4 4
 
 // -------------------- IR Sensor Pins (Line Following) --------------------
-#define IR_LEFT 0
-#define IR_MIDDLE 2
-#define IR_RIGHT 1
+#define IR_LEFT A0
+#define IR_MIDDLE A2
+#define IR_RIGHT A1
 
 // -------------------- Ultrasonic Pins --------------------
 #define TRIG_PIN_FRONT 10
