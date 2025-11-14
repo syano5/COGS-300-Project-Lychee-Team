@@ -1,0 +1,137 @@
+// -------------------- IR Sensor Pins (use these, not 0/1) --------------------
+#define IR_LEFT   A0
+#define IR_MIDDLE A1
+#define IR_RIGHT  A2
+
+// -------------------- Motor Pins (L298N) --------------------
+#define enA 9      // Left motor PWM
+#define in1 8      // Left motor dir 1
+#define in2 7      // Left motor dir 2
+#define enB 6      // Right motor PWM
+#define in3 4      // Right motor dir 1
+#define in4 5      // Right motor dir 2
+
+// -------------------- Motor Polarity (flip these if forward/backward is wrong) --------------------
+// "Forward" means the robot moves straight ahead.
+bool LEFT_FORWARD_HIGH  = true;   // true: (in1 HIGH, in2 LOW) is forward; false: (in1 LOW, in2 HIGH) is forward
+bool RIGHT_FORWARD_HIGH = false;  // guess opposite side wiring; set to true/false as needed
+
+// -------------------- Speeds --------------------
+int baseSpeed      = 110;   // forward cruising speed
+int gentleDelta    = 15;    // small correction difference
+int sharpDelta     = 50;    // bigger correction difference
+int lastDirection  = 0;     // -1 left, 0 straight, 1 right
+
+// -------------------- Helpers --------------------
+void setLeftMotor(int pwm);  // pwm: +forward, -backward, 0 stop
+void setRightMotor(int pwm);
+
+void driveForward(int pwm) { setLeftMotor(pwm); setRightMotor(pwm); }
+void stopMotors()          { setLeftMotor(0);  setRightMotor(0);   }
+
+void gentleLeft()  { setLeftMotor(baseSpeed - gentleDelta); setRightMotor(baseSpeed + gentleDelta); }
+void gentleRight() { setLeftMotor(baseSpeed + gentleDelta); setRightMotor(baseSpeed - gentleDelta); }
+
+void sharpLeft()   { setLeftMotor(baseSpeed - sharpDelta);  setRightMotor(baseSpeed + sharpDelta); }
+void sharpRight()  { setLeftMotor(baseSpeed + sharpDelta);  setRightMotor(baseSpeed - sharpDelta); }
+
+void searchLine(int lastDir) {
+  // bias search toward last known direction but keep moving forward
+  if (lastDir <= 0) gentleLeft(); else gentleRight();
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Motor pins
+  pinMode(enA, OUTPUT); pinMode(in1, OUTPUT); pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT); pinMode(in3, OUTPUT); pinMode(in4, OUTPUT);
+
+  // IR sensors (digital, active-LOW: 0 = on line)
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_MIDDLE, INPUT);
+  pinMode(IR_RIGHT, INPUT);
+
+  stopMotors();
+  Serial.println("Line Follower Ready (forward by default).");
+  delay(800);
+}
+
+void loop() {
+  // Read sensors (0 = on line, 1 = off line)
+  int left   = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right  = digitalRead(IR_RIGHT);
+
+  bool leftOn   = (left   == LOW);
+  bool midOn    = (middle == LOW);
+  bool rightOn  = (right  == LOW);
+
+  // Debug
+  Serial.print("L:"); Serial.print(left);
+  Serial.print(" M:"); Serial.print(middle);
+  Serial.print(" R:"); Serial.print(right);
+  Serial.print("  last:"); Serial.println(lastDirection);
+
+  // Decision logic
+  if (midOn && !leftOn && !rightOn) {
+    driveForward(baseSpeed);
+    lastDirection = 0;
+  }
+  else if (leftOn && !midOn && !rightOn) {
+    gentleLeft();
+    lastDirection = -1;
+  }
+  else if (rightOn && !midOn && !leftOn) {
+    gentleRight();
+    lastDirection = 1;
+  }
+  else if (leftOn && midOn && !rightOn) {
+    sharpLeft();
+    lastDirection = -1;
+  }
+  else if (rightOn && midOn && !leftOn) {
+    sharpRight();
+    lastDirection = 1;
+  }
+  else if (leftOn && midOn && rightOn) {
+    // Intersection / wide line: go straight
+    driveForward(baseSpeed);
+    lastDirection = 0;
+  }
+  else { // all off line
+    searchLine(lastDirection);
+  }
+
+  delay(25);
+}
+
+// -------------------- Motor Implementation --------------------
+void setLeftMotor(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) {
+    digitalWrite(in1, LOW); digitalWrite(in2, LOW);
+    analogWrite(enA, 0);
+    return;
+  }
+  bool forward = (pwm > 0);
+  // decide direction lines based on polarity & desired direction
+  bool dirHigh = (forward ? LEFT_FORWARD_HIGH : !LEFT_FORWARD_HIGH);
+  digitalWrite(in1, dirHigh ? HIGH : LOW);
+  digitalWrite(in2, dirHigh ? LOW  : HIGH);
+  analogWrite(enA, abs(pwm));
+}
+
+void setRightMotor(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) {
+    digitalWrite(in3, LOW); digitalWrite(in4, LOW);
+    analogWrite(enB, 0);
+    return;
+  }
+  bool forward = (pwm > 0);
+  bool dirHigh = (forward ? RIGHT_FORWARD_HIGH : !RIGHT_FORWARD_HIGH);
+  digitalWrite(in3, dirHigh ? HIGH : LOW);
+  digitalWrite(in4, dirHigh ? LOW  : HIGH);
+  analogWrite(enB, abs(pwm));
+}
