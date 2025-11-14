@@ -5,8 +5,8 @@
 #define in1 8
 #define in2 7
 #define enB 6
-#define in3 5
-#define in4 4
+#define in3 4
+#define in4 5
 
 // -------------------- Ultrasonic Pins --------------------
 #define TRIG_PIN_FRONT 10
