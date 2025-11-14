@@ -1,0 +1,47 @@
+#include <Servo.h>
+
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+
+// -------------------- IR Sensor Pins (Line Following) --------------------
+#define IR_LEFT A0
+#define IR_MIDDLE A2
+#define IR_RIGHT A1
+
+// -------------------- Ultrasonic Pins --------------------
+#define TRIG_PIN_FRONT 10
+#define ECHO_PIN_FRONT 11
+#define TRIG_PIN_SIDE 12
+#define ECHO_PIN_SIDE 13
+
+// -------------------- Servo --------------------
+#define SERVO_PIN 3
+Servo servo_9;
+
+
+void setup() {
+  pinMode(8, OUTPUT); // in1  (motor A)
+  pinMode(7, OUTPUT); // in2
+  pinMode(5, OUTPUT); // in3  (motor B)
+  pinMode(4, OUTPUT); // in4
+
+  pinMode(9, OUTPUT); // enA
+  pinMode(6, OUTPUT); // enB
+
+  // Try to drive straight forward
+  digitalWrite(8, HIGH);
+  digitalWrite(7, LOW);
+
+  digitalWrite(5, HIGH);
+  digitalWrite(4, LOW);
+
+  analogWrite(9, 120);
+  analogWrite(6, 120);
+}
+
+void loop() {}
