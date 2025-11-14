@@ -29,7 +29,7 @@ Mode currentMode = LINE_FOLLOW;
 
 // -------------------- Line Following Variables (from Document 5) --------------------
 int baseSpeed = 100;
-int turnSpeed = 60;
+int turnSpeed = 50;
 int sharpTurnSpeed = 40;
 int lastDirection = 0;
 unsigned long lineOffTime = 0;
