@@ -23,25 +23,525 @@
 #define SERVO_PIN 3
 Servo servo_9;
 
+// -------------------- Robot Modes --------------------
+enum Mode { LINE_FOLLOW, WALL_FOLLOW, OBJECT_TRACK };
+Mode currentMode = LINE_FOLLOW;
 
+// -------------------- Line Following Variables (from Document 5) --------------------
+int baseSpeed = 100;
+int turnSpeed = 50;
+int sharpTurnSpeed = 40;
+int lastDirection = 0;
+unsigned long lineOffTime = 0;
+const unsigned long LINE_LOST_TIMEOUT = 3000;
+
+// -------------------- Wall Following Variables (from Document 6) --------------------
+const float SET_POINT_WALL = 20.0;
+const float Kp_WALL = 6.0;
+const int WALL_FORWARD_SPEED = 80;
+unsigned long wallLostTime = 0;
+const unsigned long WALL_LOST_TIMEOUT = 3000;
+
+// -------------------- Object Tracking Variables (from Document 4) --------------------
+const float DETECTION_RANGE = 150.0;
+const float STOP_DISTANCE = 30.0;
+const int BASE_SPEED = 90;
+const int TURN_SPEED = 80;
+const int SWEEP_DELAY = 15;
+const int SWEEP_STEP = 5;
+
+enum ObjectState { SWEEP, ORIENT, APPROACH, PAUSE };
+ObjectState objectState = SWEEP;
+int pos = 90;
+int sweepDirection = 1;
+int objectAngle = 90;
+float lastDistance = -1;
+
+// -------------------- Setup --------------------
 void setup() {
-  pinMode(8, OUTPUT); // in1  (motor A)
-  pinMode(7, OUTPUT); // in2
-  pinMode(5, OUTPUT); // in3  (motor B)
-  pinMode(4, OUTPUT); // in4
-
-  pinMode(9, OUTPUT); // enA
-  pinMode(6, OUTPUT); // enB
-
-  // Try to drive straight forward
-  digitalWrite(8, HIGH);
-  digitalWrite(7, LOW);
-
-  digitalWrite(5, HIGH);
-  digitalWrite(4, LOW);
-
-  analogWrite(9, 120);
-  analogWrite(6, 120);
+  Serial.begin(115200);
+  
+  // Motor pins
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // IR sensors
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_MIDDLE, INPUT);
+  pinMode(IR_RIGHT, INPUT);
+  
+  // Ultrasonic
+  pinMode(TRIG_PIN_FRONT, OUTPUT);
+  pinMode(ECHO_PIN_FRONT, INPUT);
+  pinMode(TRIG_PIN_SIDE, OUTPUT);
+  pinMode(ECHO_PIN_SIDE, INPUT);
+  
+  // Servo
+  servo_9.attach(SERVO_PIN, 500, 2500);
+  servo_9.write(90);
+  
+  stopRobot();
+  
+  Serial.println("Tournament Robot Ready!");
+  Serial.println("Starting: LINE FOLLOWING MODE");
+  delay(2000);
 }
 
-void loop() {}
+// -------------------- Main Loop --------------------
+void loop() {
+  // Read sensors
+  int left = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right = digitalRead(IR_RIGHT);
+  float wallDist = getDistance(TRIG_PIN_SIDE, ECHO_PIN_SIDE);
+  
+  // Check mode transitions
+  checkModeSwitch(left, middle, right, wallDist);
+  
+  // Execute current mode
+  switch (currentMode) {
+    case LINE_FOLLOW:
+      executeLineFollow(left, middle, right);
+      break;
+    case WALL_FOLLOW:
+      executeWallFollow(wallDist);
+      break;
+    case OBJECT_TRACK:
+      executeObjectTrack();
+      break;
+  }
+  
+  delay(50);
+}
+
+// -------------------- Mode Switching Logic --------------------
+void checkModeSwitch(int left, int middle, int right, float wallDist) {
+  bool allIRoff = (left == 1 && middle == 1 && right == 1);
+  bool anyIRon = (left == 0 || middle == 0 || right == 0);
+  bool wallDetected = (wallDist > 0 && wallDist < 100);
+  
+  if (currentMode == LINE_FOLLOW) {
+    // Line lost for 3 seconds -> switch to wall following
+    if (allIRoff) {
+      if (lineOffTime == 0) lineOffTime = millis();
+      else if (millis() - lineOffTime > LINE_LOST_TIMEOUT) {
+        Serial.println("\n>>> LINE LOST! Switching to WALL FOLLOWING");
+        currentMode = WALL_FOLLOW;
+        lineOffTime = 0;
+      }
+    } else {
+      lineOffTime = 0;
+    }
+  }
+  else if (currentMode == WALL_FOLLOW) {
+    // Wall lost for 3 seconds -> switch to object tracking
+    if (!wallDetected) {
+      if (wallLostTime == 0) wallLostTime = millis();
+      else if (millis() - wallLostTime > WALL_LOST_TIMEOUT) {
+        Serial.println("\n>>> WALL LOST! Switching to OBJECT TRACKING");
+        currentMode = OBJECT_TRACK;
+        wallLostTime = 0;
+        objectState = SWEEP;
+        pos = 90;
+      }
+    } else {
+      wallLostTime = 0;
+    }
+    // Line detected -> back to line following
+    if (anyIRon) {
+      Serial.println("\n>>> LINE DETECTED! Switching to LINE FOLLOWING");
+      currentMode = LINE_FOLLOW;
+      lineOffTime = 0;
+    }
+  }
+  else if (currentMode == OBJECT_TRACK) {
+    // Line detected -> back to line following
+    if (anyIRon) {
+      Serial.println("\n>>> LINE DETECTED! Switching to LINE FOLLOWING");
+      currentMode = LINE_FOLLOW;
+      objectState = SWEEP;
+    }
+  }
+}
+
+// -------------------- LINE FOLLOWING (from Document 5) --------------------
+void executeLineFollow(int left, int middle, int right) {
+  bool leftOnLine = (left == 0);
+  bool middleOnLine = (middle == 0);
+  bool rightOnLine = (right == 0);
+  
+  Serial.print("L:");
+  Serial.print(left);
+  Serial.print(" M:");
+  Serial.print(middle);
+  Serial.print(" R:");
+  Serial.print(right);
+  Serial.print(" -> ");
+  
+  // Perfect on track
+  if (middleOnLine && !leftOnLine && !rightOnLine) {
+    Serial.println("Straight");
+    driveForward();
+    lastDirection = 0;
+  }
+  // Slightly off to right
+  else if (leftOnLine && !middleOnLine && !rightOnLine) {
+    Serial.println("Gentle left");
+    gentleLeft();
+    lastDirection = -1;
+  }
+  // Slightly off to left
+  else if (rightOnLine && !middleOnLine && !leftOnLine) {
+    Serial.println("Gentle right");
+    gentleRight();
+    lastDirection = 1;
+  }
+  // Major deviation
+  else if (leftOnLine && middleOnLine && !rightOnLine) {
+    Serial.println("Sharp right");
+    sharpRight();
+    lastDirection = 1;
+  }
+  else if (rightOnLine && middleOnLine && !leftOnLine) {
+    Serial.println("Sharp left");
+    sharpLeft();
+    lastDirection = -1;
+  }
+  // Intersection
+  else if (leftOnLine && middleOnLine && rightOnLine) {
+    Serial.println("Intersection - Continue");
+    driveForward();
+    lastDirection = 0;
+  }
+  // Lost line
+  else if (!leftOnLine && !middleOnLine && !rightOnLine) {
+    Serial.println("Lost line - Searching");
+    searchLine(lastDirection);
+  }
+}
+
+void driveForward() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enB, baseSpeed);
+}
+
+void gentleLeft() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed - 20);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enB, baseSpeed);
+}
+
+void gentleRight() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enB, baseSpeed - 20);
+}
+
+void sharpLeft() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, sharpTurnSpeed);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enB, baseSpeed);
+}
+
+void sharpRight() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, baseSpeed);
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enB, sharpTurnSpeed);
+}
+
+void searchLine(int lastDir) {
+  if (lastDir == -1) {
+    gentleRight();
+  } else if (lastDir == 1) {
+    gentleLeft();
+  } else {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+    analogWrite(enA, baseSpeed/2);
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    analogWrite(enB, baseSpeed/2);
+  }
+}
+
+// -------------------- WALL FOLLOWING (from Document 6) --------------------
+void executeWallFollow(float wallDistance) {
+  if (wallDistance < 0 || wallDistance > 100) {
+    stopRobot();
+    Serial.println("Wall lost - no reading");
+    return;
+  }
+  
+  // P-controller
+  float error = wallDistance - SET_POINT_WALL;
+  float steeringCorrection = Kp_WALL * error;
+  
+  int rightMotorSpeed = WALL_FORWARD_SPEED - steeringCorrection;
+  int leftMotorSpeed = WALL_FORWARD_SPEED + steeringCorrection;
+  
+  rightMotorSpeed = constrain(rightMotorSpeed, 30, 150);
+  leftMotorSpeed = constrain(leftMotorSpeed, 30, 150);
+  
+  controlMotor(rightMotorSpeed, leftMotorSpeed);
+  
+  Serial.print("Wall: ");
+  Serial.print(wallDistance);
+  Serial.print("cm, Err:");
+  Serial.print(error);
+  Serial.print(", R:");
+  Serial.print(rightMotorSpeed);
+  Serial.print(" L:");
+  Serial.println(leftMotorSpeed);
+}
+
+// -------------------- OBJECT TRACKING (from Document 4) --------------------
+void executeObjectTrack() {
+  switch (objectState) {
+    case SWEEP:
+      performSweep();
+      break;
+    case ORIENT:
+      orientToObject();
+      break;
+    case APPROACH:
+      approachObject();
+      break;
+    case PAUSE:
+      pauseThenSweep();
+      break;
+  }
+}
+
+void performSweep() {
+  servo_9.write(pos);
+  delay(SWEEP_DELAY);
+  
+  float distance = getDistance(TRIG_PIN_FRONT, ECHO_PIN_FRONT);
+  
+  Serial.print("Sweep: ");
+  Serial.print(pos);
+  Serial.print("° | Distance: ");
+  if (distance < 0) {
+    Serial.println("No reading");
+  } else {
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+  
+  // Object detected
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.println(">>> OBJECT DETECTED!");
+    Serial.print("    Angle: ");
+    Serial.print(pos);
+    Serial.print("° | Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+    
+    objectAngle = pos;
+    lastDistance = distance;
+    objectState = ORIENT;
+    return;
+  }
+  
+  // Continue sweeping
+  pos += (sweepDirection * SWEEP_STEP);
+  if (pos >= 180) {
+    pos = 180;
+    sweepDirection = -1;
+  } else if (pos <= 0) {
+    pos = 0;
+    sweepDirection = 1;
+  }
+}
+
+void orientToObject() {
+  Serial.print(">>> ORIENTING to face object at ");
+  Serial.print(objectAngle);
+  Serial.println("°");
+  
+  int angleDiff = objectAngle - 90;
+  
+  if (abs(angleDiff) < 15) {
+    Serial.println(">>> Close enough to center! Moving forward...");
+    stopRobot();
+    servo_9.write(90);
+    delay(300);
+    objectState = APPROACH;
+    return;
+  }
+  
+  if (angleDiff < 0) {
+    Serial.print(">>> Turning LEFT by ");
+    Serial.print(abs(angleDiff));
+    Serial.println(" degrees");
+    turnLeft(TURN_SPEED);
+  } else {
+    Serial.print(">>> Turning RIGHT by ");
+    Serial.print(angleDiff);
+    Serial.println(" degrees");
+    turnRight(TURN_SPEED);
+  }
+  
+  int turnTime = abs(angleDiff) * 10;
+  delay(turnTime);
+  
+  stopRobot();
+  delay(300);
+  
+  servo_9.write(90);
+  delay(300);
+  
+  float distance = getDistance(TRIG_PIN_FRONT, ECHO_PIN_FRONT);
+  Serial.print(">>> Verifying object at center: ");
+  if (distance < 0) {
+    Serial.println("No reading");
+  } else {
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+  
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.println(">>> Object confirmed! Approaching...");
+    objectState = APPROACH;
+  } else {
+    Serial.println(">>> Object not found. Resweeping...");
+    objectState = SWEEP;
+    pos = 60;
+    sweepDirection = 1;
+  }
+}
+
+void approachObject() {
+  servo_9.write(90);
+  delay(100);
+  
+  float distance = getDistance(TRIG_PIN_FRONT, ECHO_PIN_FRONT);
+  
+  Serial.print(">>> APPROACHING | Distance: ");
+  if (distance < 0) {
+    Serial.println("No reading - object lost!");
+    objectState = SWEEP;
+    pos = 90;
+    return;
+  }
+  
+  Serial.print(distance);
+  Serial.println(" cm");
+  
+  if (distance <= STOP_DISTANCE) {
+    Serial.println(">>> ARRIVED! Stopping at target.");
+    stopRobot();
+    delay(2000);
+    
+    Serial.println("\n================================");
+    Serial.println("  TOURNAMENT COMPLETE!");
+    Serial.println("================================");
+    
+    // Celebration
+    for (int i = 0; i < 3; i++) {
+      controlMotor(100, -100);
+      delay(300);
+      stopRobot();
+      delay(300);
+    }
+    
+    objectState = PAUSE;
+    return;
+  }
+  
+  if (distance > DETECTION_RANGE) {
+    Serial.println(">>> Object out of range. Resuming sweep...");
+    objectState = SWEEP;
+    pos = 90;
+    return;
+  }
+  
+  Serial.println(">>> Moving forward...");
+  driveForward(BASE_SPEED);
+  delay(1000);
+  stopRobot();
+  delay(500);
+  
+  Serial.println(">>> Quick sweep to reorient...");
+  objectState = SWEEP;
+  pos = 60;
+  sweepDirection = 1;
+}
+
+void pauseThenSweep() {
+  Serial.println(">>> Mission complete. Standing by...");
+  stopRobot();
+  // Stay paused
+}
+
+// -------------------- Utility Functions --------------------
+float getDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  long duration = pulseIn(echoPin, HIGH, 30000);
+  if (duration == 0) return -1;
+  
+  return duration * 0.034 / 2.0;
+}
+
+void controlMotor(int motorA_speed, int motorB_speed) {
+  if (motorA_speed >= 0) {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+  } else {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    motorA_speed = -motorA_speed;
+  }
+  analogWrite(enA, constrain(motorA_speed, 0, 255));
+  
+  if (motorB_speed >= 0) {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+  } else {
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    motorB_speed = -motorB_speed;
+  }
+  analogWrite(enB, constrain(motorB_speed, 0, 255));
+}
+
+void driveForward(int speed) {
+  controlMotor(speed, speed);
+}
+
+void turnLeft(int speed) {
+  controlMotor(-speed, speed);
+}
+
+void turnRight(int speed) {
+  controlMotor(speed, -speed);
+}
+
+void stopRobot() {
+  controlMotor(0, 0);
+}
