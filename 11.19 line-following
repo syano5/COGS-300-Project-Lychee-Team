@@ -1,173 +1,240 @@
 #include <Servo.h>
-// -------------------- IR Sensor Pins --------------------
-#define IR_LEFT A0
-#define IR_MIDDLE A1
-#define IR_RIGHT A2
-// -------------------- Motor Pins --------------------
-#define enA 9
-#define in1 8
-#define in2 7
-#define enB 6
-#define in3 5
-#define in4 4
-// -------------------- Variables --------------------
-int motorSpeed = 100;
-int turnSpeed = 60;  // Speed for gentle steering
-int moveTime = 100;  // Time to move before stopping to check (milliseconds)
-int checkTime = 50;  // Time to pause and check sensors (milliseconds)
-int turnMoveTime = 80;  // Time to turn before stopping to check (milliseconds)
 
+// -------------------- IR Sensor Pins --------------------
+#define IR_LEFT   A0
+#define IR_MIDDLE A1
+#define IR_RIGHT  A2
+
+// -------------------- Motor Pins --------------------
+// FIX (CORRECT FOR YOUR REAL ROBOT WIRING)
+#define enA 9     // RIGHT motor PWM
+#define in1 8     // RIGHT DIR
+#define in2 7
+
+#define enB 6     // LEFT motor PWM
+#define in3 4     // LEFT DIR
+#define in4 5
+
+
+// -------------------- Motor Polarity --------------------
+bool LEFT_FORWARD_HIGH  = true;
+bool RIGHT_FORWARD_HIGH = false;
+
+// -------------------- Servo --------------------
+#define SERVO_PIN 3
+Servo servo_9;
+int servoPos = 80;         // start centered
+int servoInc = 5;
+int servoDir = 1;
+
+// -------------------- Object Detection --------------------
+#define SIDE_TRIG 10
+#define SIDE_ECHO 11
+
+#define FRONT_TRIG 12
+#define FRONT_ECHO 13
+
+const float DETECTION_RANGE = 100.0;  // cm
+const float TOUCH_DISTANCE   = 5.0;   // cm (considered "touching" object)
+
+bool objectFound = false;
+int objectAngle = 90;
+
+// -------------------- Speeds --------------------
+int baseSpeed   = 90;
+int gentleDelta = 20;
+int sharpDelta  = 50;
+int lastDir     = 0;
+
+// -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
-  
-  // Motor pins setup
-  pinMode(enA, OUTPUT);
-  pinMode(in1, OUTPUT);
-  pinMode(in2, OUTPUT);
-  pinMode(enB, OUTPUT);
-  pinMode(in3, OUTPUT);
-  pinMode(in4, OUTPUT);
-  
-  // IR sensor setup
-  pinMode(IR_LEFT, INPUT);
-  pinMode(IR_MIDDLE, INPUT);
-  pinMode(IR_RIGHT, INPUT);
-  
+
+  // Motors
+  pinMode(enA, OUTPUT); pinMode(in1, OUTPUT); pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT); pinMode(in3, OUTPUT); pinMode(in4, OUTPUT);
+
+  // IR sensors
+  pinMode(IR_LEFT, INPUT); pinMode(IR_MIDDLE, INPUT); pinMode(IR_RIGHT, INPUT);
+
+  // Ultrasonic servo
+  // Ultrasonic sensors
+  pinMode(SIDE_TRIG, OUTPUT);
+  pinMode(SIDE_ECHO, INPUT);
+
+  pinMode(FRONT_TRIG, OUTPUT);
+  pinMode(FRONT_ECHO, INPUT);
+
+  servo_9.attach(SERVO_PIN, 500, 2500);
+  servo_9.write(servoPos);
+
   stopMotors();
-  Serial.println("3-Sensor Line Following Robot Ready!");
-  delay(2000);
+  Serial.println("Object Tracking Robot Ready");
+  delay(800);
 }
+
+float measureUltrasonic(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+
+  long duration = pulseIn(echo, HIGH, 30000);
+  if (duration == 0) return -1;
+  return duration * 0.034 / 2.0;
+}
+
+float getSideDistance() {
+  return measureUltrasonic(SIDE_TRIG, SIDE_ECHO);
+}
+
+float getFrontDistance() {
+  return measureUltrasonic(FRONT_TRIG, FRONT_ECHO);
+}
+
+
+// -------------------- IR Tape Avoidance --------------------
+bool onWhiteTape() {
+  int left   = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right  = digitalRead(IR_RIGHT);
+  return (left == HIGH || middle == HIGH || right == HIGH); // HIGH = off black line
+}
+
+void avoidTape() {
+  int left   = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right  = digitalRead(IR_RIGHT);
+
+  if (middle == HIGH) { driveForward(baseSpeed / 2); }  // slow if uncertain
+  if (left == HIGH)  { gentleRight(); }
+  if (right == HIGH) { gentleLeft(); }
+}
+
+// -------------------- Motor Helpers --------------------
+void setLeftMotor(int pwm);
+void setRightMotor(int pwm);
+void driveForward(int pwm) { setLeftMotor(pwm); setRightMotor(pwm); }
+void stopMotors()          { setLeftMotor(0); setRightMotor(0); }
+void gentleLeft()  { setLeftMotor(baseSpeed - gentleDelta); setRightMotor(baseSpeed + gentleDelta); }
+void gentleRight() { setLeftMotor(baseSpeed + gentleDelta); setRightMotor(baseSpeed - gentleDelta); }
+void sharpLeft()   { setLeftMotor(baseSpeed - sharpDelta);  setRightMotor(baseSpeed + sharpDelta); }
+void sharpRight()  { setLeftMotor(baseSpeed + sharpDelta);  setRightMotor(baseSpeed - sharpDelta); }
 
 void loop() {
-  // Read all sensors (0 = on line, 1 = off line - adjust if needed)
-  int left = digitalRead(IR_LEFT);
-  int middle = digitalRead(IR_MIDDLE);
-  int right = digitalRead(IR_RIGHT);
-  
-  bool leftOnLine = (left == 0);
-  bool middleOnLine = (middle == 0);
-  bool rightOnLine = (right == 0);
-  
-  // Decision logic
-  if (leftOnLine && middleOnLine && !rightOnLine) {
-    // Left turn corner detected
-    //fixed
-    steerLeft();
-    delay(moveTime);  // Move for a short time
-    stopMotors();
-    delay(checkTime);  // Stop to check
+
+  // -------------------------- LOOP 1 --------------------------
+  // Line following until:
+  //   (1) all IR sensors OFF line (black)
+  //   and
+  //   (2) side ultrasonic detects object within range
+  // -------------------------------------------------------------
+
+  while (!objectFound) {
+
+    // Line following
+    int L = digitalRead(IR_LEFT);
+    int M = digitalRead(IR_MIDDLE);
+    int R = digitalRead(IR_RIGHT);
+
+    if (!allOffLine()) {
+      // standard line follower
+      if (M==LOW) driveForward(120);
+      if (L==LOW) gentleLeft();
+      if (R==LOW) gentleRight();
+    } else {
+      stopMotors();
+    }
+
+    // side sensor check
+    float sideDist = getSideDistance();
+
+    if (allOffLine() && sideDist > 0 && sideDist < DETECTION_RANGE) {
+      objectFound = true;
+      Serial.println(">>> OBJECT FOUND DURING LINE FOLLOWING");
+      stopMotors();
+      delay(300);
+      break;
+    }
   }
-  else if (rightOnLine && middleOnLine && !leftOnLine) {
-    // Right turn corner detected
-    Serial.println("Line on right - steering left");
-    steerRight();
-    delay(moveTime);  // Move for a short time
-    stopMotors();
-    delay(checkTime);  // Stop to check
+
+
+  // -------------------------- LOOP 2 --------------------------
+  // Wall following until:
+  //    (1) all IR sensors ON (white tape)
+  //    and
+  //    (2) front sensor does NOT detect wall
+  // -------------------------------------------------------------
+
+  while (objectFound && !allOnWhite()) {
+
+    float frontDist = getFrontDistance();
+
+    // Avoid hitting wall
+    if (frontDist > 0 && frontDist < 20) {
+      sharpLeft();
+      delay(150);
+      continue;
+    }
+
+    // Wall follow: keep wall on right
+    float wallDist = getSideDistance();
+
+    if (wallDist < 15) {
+      gentleLeft();
+    } else if (wallDist > 20) {
+      gentleRight();
+    } else {
+      driveForward(130);
+    }
+
+    // Exit condition: entire tape detected
+    if (allOnWhite() && frontDist > 20) {
+      stopMotors();
+      Serial.println(">>> WHITE TAPE FOUND AT OBJECT ZONE");
+      break;
+    }
   }
-  else if (middleOnLine) {
-    // Middle sensor on line - go straight
-    Serial.println("On line - straight");
-    driveForward();
-    delay(moveTime);  // Move for a short time
-    stopMotors();
-    delay(checkTime);  // Stop to check
-  }
-  else if (leftOnLine && !middleOnLine && !rightOnLine) {
-    // Left sensor sees line - steer right gently
-    // steerLeft();
-    // delay(moveTime);  // Move for a short time
-    // stopMotors();
-    // delay(checkTime);  // Stop to check
-    turn90Left();
-  }
-  else if (rightOnLine && !middleOnLine && !leftOnLine) {
-    // Right sensor sees line - steer left gently
-    // Serial.println("Line on right - steering left");
-    // steerRight();
-    // delay(moveTime);  // Move for a short time
-    // stopMotors();
-    // delay(checkTime);  // Stop to check
-    turn90Right();
-  }
-  else {
-    // No sensors see line - stop or keep last direction
-    Serial.println("Lost line - stopping");
-    stopMotors();
-  }
-  
-  delay(50);
+
+  // -------------------------- FINAL APPROACH ----------------------
+  // You can now use your servo sweep or normal forward motion
+  // ----------------------------------------------------------------
+
+  driveForward(100);
 }
 
-// -------------------- Motor Control Functions --------------------
-void driveForward() {
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  analogWrite(enA, motorSpeed);
-  
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  analogWrite(enB, motorSpeed);
+bool allOffLine() { 
+  return digitalRead(IR_LEFT)==LOW &&
+         digitalRead(IR_MIDDLE)==LOW &&
+         digitalRead(IR_RIGHT)==LOW;
 }
 
-void steerLeft() {
-  // Slow down right motor to steer left gently
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  analogWrite(enA, motorSpeed);
-  
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  analogWrite(enB, turnSpeed);
+bool allOnWhite() {
+  return digitalRead(IR_LEFT)==HIGH &&
+         digitalRead(IR_MIDDLE)==HIGH &&
+         digitalRead(IR_RIGHT)==HIGH;
 }
 
-void steerRight() {
-  // Slow down left motor to steer right gently
-  digitalWrite(in1, HIGH);
-  digitalWrite(in2, LOW);
-  analogWrite(enA, turnSpeed);
-  
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  analogWrite(enB, motorSpeed);
+
+
+// -------------------- Motor Implementation --------------------
+void setLeftMotor(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) { digitalWrite(in1, LOW); digitalWrite(in2, LOW); analogWrite(enA, 0); return; }
+  bool forward = (pwm > 0);
+  bool dirHigh = (forward ? LEFT_FORWARD_HIGH : !LEFT_FORWARD_HIGH);
+  digitalWrite(in1, dirHigh ? HIGH : LOW);
+  digitalWrite(in2, dirHigh ? LOW  : HIGH);
+  analogWrite(enA, abs(pwm));
 }
 
-void turn90Left() {
-  // Sharp left turn - incremental
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, LOW);
-  analogWrite(enA, 0);
-  
-  digitalWrite(in3, HIGH);
-  digitalWrite(in4, LOW);
-  analogWrite(enB, motorSpeed);
-  
-  delay(turnMoveTime);  // Turn for a short time
-  stopMotors();
-  delay(checkTime);  // Stop to check
-}
-
-void turn90Right() {
-  // Sharp right turn - incremental
-  digitalWrite(in1, LOW);//HIGH
-  digitalWrite(in2, HIGH);//LOW
-  analogWrite(enA, motorSpeed);
-  
-  digitalWrite(in3, LOW);//LOW
-  digitalWrite(in4, LOW);//LOW
-  analogWrite(enB, 0);
-  
-  delay(turnMoveTime);  // Turn for a short time
-  stopMotors();
-  delay(checkTime);  // Stop to check
-}
-
-void stopMotors() {
-  digitalWrite(in1, LOW);
-  digitalWrite(in2, LOW);
-  analogWrite(enA, 0);
-  
-  digitalWrite(in3, LOW);
-  digitalWrite(in4, LOW);
-  analogWrite(enB, 0);
+void setRightMotor(int pwm) {
+  pwm = constrain(pwm, -255, 255);
+  if (pwm == 0) { digitalWrite(in3, LOW); digitalWrite(in4, LOW); analogWrite(enB, 0); return; }
+  bool forward = (pwm > 0);
+  bool dirHigh = (forward ? RIGHT_FORWARD_HIGH : !RIGHT_FORWARD_HIGH);
+  digitalWrite(in3, dirHigh ? HIGH : LOW);
+  digitalWrite(in4, dirHigh ? LOW  : HIGH);
+  analogWrite(enB, abs(pwm));
 }
