@@ -1,0 +1,208 @@
+// Motor pins
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+
+// Ultrasonic sensors
+#define TRIG_FRONT 10
+#define ECHO_FRONT 11
+#define TRIG_RIGHT 12
+#define ECHO_RIGHT 13
+
+// Sensor pins
+const int D_1 = 2, D_2 = 3;
+
+// Settings
+const int SPEED = 100;
+const int TURN_SPEED = 90;
+const float WALL_DISTANCE = 15.0;  // Target distance from right wall
+const float FRONT_STOP = 20.0;     // Stop if front obstacle closer than this
+
+bool mazeMode = false;
+
+void setup() {
+  // Motor pins
+  pinMode(enA, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // Sensor pins
+  pinMode(TRIG_FRONT, OUTPUT);
+  pinMode(ECHO_FRONT, INPUT);
+  pinMode(TRIG_RIGHT, OUTPUT);
+  pinMode(ECHO_RIGHT, INPUT);
+  pinMode(D_1, INPUT_PULLUP);
+  pinMode(D_2, INPUT_PULLUP);
+  
+  Serial.begin(9600);
+  Serial.println("Ready! Commands: m=maze, w/a/s/d/x=manual, t=test");
+}
+
+float getDistance(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  
+  long duration = pulseIn(echo, HIGH, 30000);
+  if (duration == 0) return 999;
+  
+  return duration * 0.034 / 2.0;
+}
+
+void setMotors(int leftSpeed, int rightSpeed) {
+  // Left motor (Motor B)
+  if (leftSpeed > 0) {
+    digitalWrite(in3, HIGH);
+    digitalWrite(in4, LOW);
+    analogWrite(enB, leftSpeed);
+  } else if (leftSpeed < 0) {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, HIGH);
+    analogWrite(enB, -leftSpeed);
+  } else {
+    digitalWrite(in3, LOW);
+    digitalWrite(in4, LOW);
+    analogWrite(enB, 0);
+  }
+  
+  // Right motor (Motor A)
+  if (rightSpeed > 0) {
+    digitalWrite(in1, HIGH);
+    digitalWrite(in2, LOW);
+    analogWrite(enA, rightSpeed);
+  } else if (rightSpeed < 0) {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, HIGH);
+    analogWrite(enA, -rightSpeed);
+  } else {
+    digitalWrite(in1, LOW);
+    digitalWrite(in2, LOW);
+    analogWrite(enA, 0);
+  }
+}
+
+void forward(int speed) {
+  setMotors(speed, speed);
+}
+
+void backward(int speed) {
+  setMotors(-speed, -speed);
+}
+
+void turnLeft(int speed) {
+  setMotors(-speed, speed);
+}
+
+void turnRight(int speed) {
+  setMotors(speed, -speed);
+}
+
+void stop() {
+  setMotors(0, 0);
+}
+
+void mazeSolve() {
+  float front = getDistance(TRIG_FRONT, ECHO_FRONT);
+  float right = getDistance(TRIG_RIGHT, ECHO_RIGHT);
+  
+  // Priority 1: Front obstacle - back up and turn left
+  if (front < FRONT_STOP) {
+    Serial.println("Front blocked! Backing up...");
+    backward(SPEED);
+    delay(500);
+    turnLeft(TURN_SPEED);
+    delay(400);
+    return;
+  }
+  
+  // Priority 2: Right wall lost - turn right to follow it
+  if (right > 35) {
+    Serial.println("Right opening! Turning right...");
+    turnRight(TURN_SPEED);
+    delay(300);
+    return;
+  }
+  
+  // Priority 3: Follow right wall
+  float error = right - WALL_DISTANCE;
+  
+  if (error > 5) {
+    // Too far from wall - turn right
+    setMotors(SPEED + 20, SPEED - 20);
+  } else if (error < -5) {
+    // Too close to wall - turn left
+    setMotors(SPEED - 20, SPEED + 20);
+  } else {
+    // Good distance - go straight
+    forward(SPEED);
+  }
+  
+  Serial.print("Front:");
+  Serial.print(front);
+  Serial.print(" Right:");
+  Serial.println(right);
+}
+
+void loop() {
+  if (Serial.available()) {
+    char cmd = Serial.read();
+    
+    switch (cmd) {
+      case 'm':
+        mazeMode = true;
+        Serial.println("MAZE MODE ON");
+        break;
+        
+      case 'w':
+        mazeMode = false;
+        forward(SPEED);
+        Serial.println("Forward");
+        break;
+        
+      case 's':
+        mazeMode = false;
+        backward(SPEED);
+        Serial.println("Backward");
+        break;
+        
+      case 'a':
+        mazeMode = false;
+        turnLeft(TURN_SPEED);
+        Serial.println("Left");
+        break;
+        
+      case 'd':
+        mazeMode = false;
+        turnRight(TURN_SPEED);
+        Serial.println("Right");
+        break;
+        
+      case 'x':
+        mazeMode = false;
+        stop();
+        Serial.println("Stop");
+        break;
+        
+      case 't':
+        Serial.print("Front: ");
+        Serial.print(getDistance(TRIG_FRONT, ECHO_FRONT));
+        Serial.print(" cm, Right: ");
+        Serial.print(getDistance(TRIG_RIGHT, ECHO_RIGHT));
+        Serial.println(" cm");
+        break;
+    }
+  }
+  
+  if (mazeMode) {
+    mazeSolve();
+    delay(100);
+  }
+}
