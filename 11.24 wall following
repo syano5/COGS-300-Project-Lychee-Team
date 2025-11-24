@@ -18,13 +18,14 @@ const int D_1 = 2, D_2 = 3;
 // Settings
 const int SPEED = 100;
 const int TURN_SPEED = 90;
-const float WALL_DISTANCE = 15.0;  // Target distance from right wall
-const float FRONT_STOP = 20.0;     // Stop if front obstacle closer than this
+const float WALL_DISTANCE = 15.0;
+const float FRONT_STOP = 20.0;
 
-bool mazeMode = false;
+bool mazeMode = true;  // Auto-start in maze mode
+unsigned long lastTurnTime = 0;
+const int TURN_DELAY = 1000; // Prevent rapid direction changes
 
 void setup() {
-  // Motor pins
   pinMode(enA, OUTPUT);
   pinMode(enB, OUTPUT);
   pinMode(in1, OUTPUT);
@@ -32,7 +33,6 @@ void setup() {
   pinMode(in3, OUTPUT);
   pinMode(in4, OUTPUT);
   
-  // Sensor pins
   pinMode(TRIG_FRONT, OUTPUT);
   pinMode(ECHO_FRONT, INPUT);
   pinMode(TRIG_RIGHT, OUTPUT);
@@ -41,7 +41,8 @@ void setup() {
   pinMode(D_2, INPUT_PULLUP);
   
   Serial.begin(9600);
-  Serial.println("Ready! Commands: m=maze, w/a/s/d/x=manual, t=test");
+  Serial.println("MAZE MODE AUTO-START! Commands: x=stop, w/a/s/d=manual, t=test");
+  delay(2000);  // 2 second delay before starting
 }
 
 float getDistance(int trig, int echo) {
@@ -113,42 +114,63 @@ void mazeSolve() {
   float front = getDistance(TRIG_FRONT, ECHO_FRONT);
   float right = getDistance(TRIG_RIGHT, ECHO_RIGHT);
   
-  // Priority 1: Front obstacle - back up and turn left
+  Serial.print("Front: ");
+  Serial.print(front);
+  Serial.print(" cm, Right: ");
+  Serial.print(right);
+  Serial.println(" cm");
+  
+  // Filter out invalid readings
+  if (front > 400) front = 400;
+  if (right > 400) right = 400;
+  
+  unsigned long currentTime = millis();
+  
+  // Priority 1: Front obstacle - stop, back up, then turn
   if (front < FRONT_STOP) {
-    Serial.println("Front blocked! Backing up...");
+    Serial.println("Front blocked!");
+    stop();
+    delay(200);
     backward(SPEED);
-    delay(500);
-    turnLeft(TURN_SPEED);
-    delay(400);
-    return;
-  }
-  
-  // Priority 2: Right wall lost - turn right to follow it
-  if (right > 35) {
-    Serial.println("Right opening! Turning right...");
-    turnRight(TURN_SPEED);
     delay(300);
+    stop();
+    delay(200);
+    turnLeft(TURN_SPEED);
+    delay(500);
+    stop();
+    lastTurnTime = currentTime;
     return;
   }
   
-  // Priority 3: Follow right wall
-  float error = right - WALL_DISTANCE;
+  // Priority 2: Right wall lost (opening detected)
+  if (right > 40 && (currentTime - lastTurnTime > TURN_DELAY)) {
+    Serial.println("Right opening!");
+    forward(SPEED);
+    delay(300);
+    turnRight(TURN_SPEED);
+    delay(400);
+    stop();
+    lastTurnTime = currentTime;
+    return;
+  }
   
-  if (error > 5) {
-    // Too far from wall - turn right
-    setMotors(SPEED + 20, SPEED - 20);
-  } else if (error < -5) {
-    // Too close to wall - turn left
-    setMotors(SPEED - 20, SPEED + 20);
+  // Priority 3: Wall following with proportional control
+  if (right < 200) {  // Only follow if wall is detected
+    float error = right - WALL_DISTANCE;
+    int adjustment = constrain(error * 3, -40, 40);
+    
+    int leftSpeed = SPEED - adjustment;
+    int rightSpeed = SPEED + adjustment;
+    
+    // Constrain speeds
+    leftSpeed = constrain(leftSpeed, 60, 140);
+    rightSpeed = constrain(rightSpeed, 60, 140);
+    
+    setMotors(leftSpeed, rightSpeed);
   } else {
-    // Good distance - go straight
+    // No wall detected, go straight
     forward(SPEED);
   }
-  
-  Serial.print("Front:");
-  Serial.print(front);
-  Serial.print(" Right:");
-  Serial.println(right);
 }
 
 void loop() {
@@ -158,6 +180,7 @@ void loop() {
     switch (cmd) {
       case 'm':
         mazeMode = true;
+        lastTurnTime = millis();
         Serial.println("MAZE MODE ON");
         break;
         
@@ -203,6 +226,6 @@ void loop() {
   
   if (mazeMode) {
     mazeSolve();
-    delay(100);
+    delay(50);
   }
 }
