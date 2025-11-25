@@ -73,8 +73,8 @@ void controlMotor(int motorA_speed, int motorB_speed) {
     digitalWrite(in1, HIGH);   // REVERSED
     digitalWrite(in2, LOW);  // REVERSED
   } else {
-    digitalWrite(in1, HIGH);  // REVERSED
-    digitalWrite(in2, LOW);   // REVERSED
+    digitalWrite(in1, LOW);  // REVERSED
+    digitalWrite(in2, HIGH);   // REVERSED
     motorA_speed = -motorA_speed;
   }
   analogWrite(enA, constrain(motorA_speed, 0, 255));
@@ -134,7 +134,7 @@ void orientToObject() {
 
   if (turnAmount > 10) { // turn right
     turnRight(BASE_SPEED);
-    delay(abs(turnAmount) * 10); // adjust time per degree
+    delay(abs(turnAmount) * 10);
   } else if (turnAmount < -10) { // turn left
     turnLeft(BASE_SPEED);
     delay(abs(turnAmount) * 10);
@@ -142,16 +142,32 @@ void orientToObject() {
 
   stopRobot();
   servo_9.write(90); // center ultrasonic forward
-  delay(300);
+  delay(500);  // Increased delay to stabilize
+  
+  // Verify object is still detected at center
+  float distance = getDistance();
+  if (distance < 0 || distance > DETECTION_RANGE) {
+    Serial.println("Lost object during orientation. Resweeping...");
+    objectFound = false;
+    pos = 0;
+    currentMode = SWEEP;
+    return;
+  }
+  
+  Serial.println("Orientation complete. Starting follow mode.");
   currentMode = FOLLOW;
 }
 
 // -------------------- Follow --------------------
 void followMe() {
   float distance = getDistance();
+  
+  // Lost object - do full 180° sweep to relocate
   if (distance < 0 || distance > DETECTION_RANGE) {
-    Serial.println("Lost object! Resweeping...");
+    Serial.println("Lost object! Doing 180° sweep...");
     stopRobot();
+    objectFound = false;
+    pos = 0;  // Reset sweep position
     currentMode = SWEEP;
     return;
   }
