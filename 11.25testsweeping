@@ -1,0 +1,82 @@
+#include <Servo.h>
+
+// -------------------- Servo --------------------
+#define SERVO_PIN 3
+Servo servo_9;
+int servoPos = 90;         // start centered
+int servoInc = 5;          // degrees to increment each step
+int servoDir = 1;          // direction: 1 = right, -1 = left
+
+// -------------------- Ultrasonic Sensor --------------------
+#define TRIG_PIN 10
+#define ECHO_PIN 11
+
+// -------------------- Setup --------------------
+void setup() {
+  Serial.begin(115200);
+  
+  // Setup ultrasonic sensor
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  // Setup servo
+  servo_9.attach(SERVO_PIN, 500, 2500);
+  servo_9.write(servoPos);
+  
+  Serial.println("=== SERVO SWEEP TEST ===");
+  Serial.println("Sweeping from 0 to 180 degrees");
+  Serial.println("Format: Angle | Distance (cm)");
+  Serial.println("========================");
+  delay(1000);
+}
+
+// -------------------- Distance Measurement --------------------
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return -1;  // timeout
+  return duration * 0.034 / 2.0;
+}
+
+// -------------------- Main Loop --------------------
+void loop() {
+  // Move servo to next position
+  servoPos += servoDir * servoInc;
+  
+  // Reverse direction at limits
+  if (servoPos >= 180) {
+    servoPos = 180;
+    servoDir = -1;
+    Serial.println("--- Reached 180° - Reversing ---");
+  } 
+  else if (servoPos <= 0) {
+    servoPos = 0;
+    servoDir = 1;
+    Serial.println("--- Reached 0° - Reversing ---");
+  }
+  
+  // Move servo
+  servo_9.write(servoPos);
+  delay(200);  // Wait for servo to reach position
+  
+  // Measure distance
+  float distance = getDistance();
+  
+  // Print results
+  Serial.print("Angle: ");
+  Serial.print(servoPos);
+  Serial.print("° | Distance: ");
+  if (distance > 0) {
+    Serial.print(distance);
+    Serial.println(" cm");
+  } else {
+    Serial.println("Out of range");
+  }
+  
+  delay(300);  // Delay between measurements
+}
