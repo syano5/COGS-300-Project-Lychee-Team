@@ -9,6 +9,8 @@ int sweepDelay = 25;
 // -------------------- Ultrasonic Pins --------------------
 #define TRIG_PIN 10
 #define ECHO_PIN 11
+#define TRIG_PIN_SIDE 12  // Side sensor
+#define ECHO_PIN_SIDE 13  // Side sensor
 
 // -------------------- Motor Pins --------------------
 #define enA 9
@@ -20,13 +22,14 @@ int sweepDelay = 25;
 
 // -------------------- Constants --------------------
 const float DETECTION_RANGE = 150.0; // cm (~5 ft)
-const float STOP_DISTANCE = 30.0;    // cm (~1 ft)
+const float STOP_DISTANCE = 10.0;    // cm (~1 ft)
+const float SIDE_OBSTACLE_DISTANCE = 30.0; // cm - trigger avoidance
 const int BASE_SPEED = 90;
 const int MAX_SPEED = 120;
 const int MIN_SPEED = 50;
 const float Kp = 6.0;                // proportional gain for following
 const float SET_POINT = 25.0;
-const int PAUSE_TIME = 5000;         // 5s pause
+const int PAUSE_TIME = 1000;         // 5s pause
 
 // -------------------- State Variables --------------------
 enum Mode { SWEEP, ORIENT, FOLLOW, PAUSE };
@@ -47,6 +50,8 @@ void setup() {
   pinMode(in4, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG_PIN_SIDE, OUTPUT);  // Added
+  pinMode(ECHO_PIN_SIDE, INPUT);   // Added
 
   Serial.println("Servo + Ultrasonic Integrated System Ready!");
   servo_9.write(90);
@@ -60,10 +65,23 @@ float getDistance() {
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
-  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // timeout after 30ms
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
   if (duration == 0) return -1;
   return duration * 0.034 / 2.0;
 }
+
+// Side sensor distance measurement
+float getSideDistance() {
+  digitalWrite(TRIG_PIN_SIDE, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN_SIDE, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN_SIDE, LOW);
+  long duration = pulseIn(ECHO_PIN_SIDE, HIGH, 30000);
+  if (duration == 0) return -1;
+  return duration * 0.034 / 2.0;
+}
+
 
 // -------------------- Motor Control --------------------
 // FIXED: Reversed the logic so positive speed = forward
@@ -158,16 +176,31 @@ void orientToObject() {
   currentMode = FOLLOW;
 }
 
-// -------------------- Follow --------------------
+// -------------------- Follow with Side Obstacle Avoidance --------------------
 void followMe() {
   float distance = getDistance();
+  float sideDistance = getSideDistance();
+  
+  // Check side obstacle first
+  if (sideDistance > 0 && sideDistance < SIDE_OBSTACLE_DISTANCE) {
+    Serial.print("!!! Side obstacle detected at ");
+    Serial.print(sideDistance);
+    Serial.println(" cm - Avoiding!");
+    
+    // Turn away from side obstacle
+    turnLeft(BASE_SPEED);  // Turn left to avoid right-side obstacle
+    delay(500);
+    stopRobot();
+    delay(200);
+    return;
+  }
   
   // Lost object - do full 180° sweep to relocate
   if (distance < 0 || distance > DETECTION_RANGE) {
     Serial.println("Lost object! Doing 180° sweep...");
     stopRobot();
     objectFound = false;
-    pos = 0;  // Reset sweep position
+    pos = 0;
     currentMode = SWEEP;
     return;
   }
@@ -188,6 +221,8 @@ void followMe() {
   controlMotor(motorSpeed, motorSpeed);
   Serial.print("Following | Distance: ");
   Serial.print(distance);
+  Serial.print(" cm | Side: ");
+  Serial.print(sideDistance);
   Serial.print(" cm | Speed: ");
   Serial.println(motorSpeed);
   delay(100);
