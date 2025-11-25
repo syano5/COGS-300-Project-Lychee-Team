@@ -70,8 +70,8 @@ float getDistance() {
 void controlMotor(int motorA_speed, int motorB_speed) {
   // Motor A (Right)
   if (motorA_speed >= 0) {
-    digitalWrite(in1, LOW);   // REVERSED
-    digitalWrite(in2, HIGH);  // REVERSED
+    digitalWrite(in1, HIGH);   // REVERSED
+    digitalWrite(in2, LOW);  // REVERSED
   } else {
     digitalWrite(in1, HIGH);  // REVERSED
     digitalWrite(in2, LOW);   // REVERSED
