@@ -1,0 +1,189 @@
+#include <Servo.h>
+// -------------------- IR Sensor Pins --------------------
+#define IR_LEFT 0
+#define IR_MIDDLE 2
+#define IR_RIGHT A0
+// -------------------- Motor Pins --------------------
+#define enA 9
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+// -------------------- Variables --------------------
+int rightMotorSpeed = 130;  // Motor A - Right wheel
+int leftMotorSpeed = 160;   // Motor B - Left wheel (30 more to compensate for weakness)
+int rightTurnSpeed = 80;    // Right wheel turn speed
+int leftTurnSpeed = 110;    // Left wheel turn speed (30 more to compensate for weakness)
+int moveTime = 100;  // Time to move before stopping to check (milliseconds)
+int checkTime = 50;  // Time to pause and check sensors (milliseconds)
+int turnMoveTime = 60;  // Reduced time for sharper, quicker turns (less than 90 degrees)
+int backwardTime = 40;  // Time to drive backwards to recheck position
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Motor pins setup
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // IR sensor setup
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_MIDDLE, INPUT);
+  pinMode(IR_RIGHT, INPUT);
+  
+  stopMotors();
+  Serial.println("3-Sensor Line Following Robot Ready!");
+  delay(2000);
+}
+
+void loop() {
+  // Read all sensors (0 = on white tape, 1 = off white tape)
+  int left = digitalRead(IR_LEFT);
+  int middle = digitalRead(IR_MIDDLE);
+  int right = digitalRead(IR_RIGHT);
+  
+  bool leftOnLine = (left == 0);
+  bool middleOnLine = (middle == 0);
+  bool rightOnLine = (right == 0);
+  
+  // Decision logic
+  if (leftOnLine && middleOnLine && !rightOnLine) {
+    // Left turn corner detected
+    Serial.println("LEFT CORNER - Turning left with backward check");
+    turnLeft();
+  }
+  else if (rightOnLine && middleOnLine && !leftOnLine) {
+    // Right turn corner detected
+    Serial.println("RIGHT CORNER - Turning right with backward check");
+    turnRight();
+  }
+  else if (middleOnLine) {
+    // Middle sensor on line - go straight
+    Serial.println("On line - straight");
+    driveForward();
+    delay(moveTime);  // Move for a short time
+    stopMotors();
+    delay(checkTime);  // Stop to check
+  }
+  else if (leftOnLine && !middleOnLine) {
+    // Left sensor sees line - steer right gently
+    Serial.println("Line on left - steering right");
+    steerLeft();
+    delay(moveTime);  // Move for a short time
+    stopMotors();
+    delay(checkTime);  // Stop to check
+  }
+  else if (rightOnLine && !middleOnLine) {
+    // Right sensor sees line - steer left gently
+    Serial.println("Line on right - steering left");
+    steerRight();
+    delay(moveTime);  // Move for a short time
+    stopMotors();
+    delay(checkTime);  // Stop to check
+  }
+  else {
+    // No sensors see line - stop or keep last direction
+    Serial.println("Lost line - stopping");
+    stopMotors();
+  }
+  
+  delay(50);
+}
+
+// -------------------- Motor Control Functions --------------------
+void driveForward() {
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, rightMotorSpeed);  // Right wheel
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, leftMotorSpeed);   // Left wheel
+}
+
+void driveBackward() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, HIGH);
+  analogWrite(enA, rightMotorSpeed);  // Right wheel backward
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, HIGH);
+  analogWrite(enB, leftMotorSpeed);   // Left wheel backward
+}
+
+void steerLeft() {
+  // Only right motor (Motor A) moves to steer left gently
+  // Left motor (Motor B) completely stopped
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, rightMotorSpeed);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
+
+void steerRight() {
+  // Only left motor (Motor B) moves to steer right gently
+  // Right motor (Motor A) completely stopped
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, leftTurnSpeed);
+}
+
+void turnLeft() {
+  // Sharp left turn - optimized for turns less than 90 degrees
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);  // Right wheel stopped
+  
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, leftMotorSpeed);  // Left wheel moving
+  
+  delay(turnMoveTime);  // Turn for a short time
+  
+  // Drive backward to recheck position instead of stopping
+  driveBackward();
+  delay(backwardTime);
+  stopMotors();
+  delay(checkTime);  // Brief pause to check sensors
+}
+
+void turnRight() {
+  // Sharp right turn - optimized for turns less than 90 degrees
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, rightMotorSpeed);  // Right wheel moving
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);  // Left wheel stopped
+  
+  delay(turnMoveTime);  // Turn for a short time
+  
+  // Drive backward to recheck position instead of stopping
+  driveBackward();
+  delay(backwardTime);
+  stopMotors();
+  delay(checkTime);  // Brief pause to check sensors
+}
+
+void stopMotors() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
