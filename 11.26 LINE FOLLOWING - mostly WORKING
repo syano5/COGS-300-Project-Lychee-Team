@@ -11,10 +11,10 @@
 #define in3 5
 #define in4 4
 // -------------------- Variables --------------------
-int rightMotorSpeed = 130;  // Motor A - Right wheel
-int leftMotorSpeed = 160;   // Motor B - Left wheel (30 more to compensate for weakness)
-int rightTurnSpeed = 80;    // Right wheel turn speed
-int leftTurnSpeed = 110;    // Left wheel turn speed (30 more to compensate for weakness)
+int rightMotorSpeed = 100;  // Motor A - Right wheel
+int leftMotorSpeed = 130;   // Motor B - Left wheel (30 more to compensate for weakness)
+int rightTurnSpeed = 65;    // Right wheel turn speed
+int leftTurnSpeed = 80;    // Left wheel turn speed (30 more to compensate for weakness)
 int moveTime = 100;  // Time to move before stopping to check (milliseconds)
 int checkTime = 50;  // Time to pause and check sensors (milliseconds)
 int turnMoveTime = 80;  // Time to turn before stopping to check (milliseconds)
