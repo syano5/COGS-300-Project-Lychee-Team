@@ -1,5 +1,5 @@
 // Motor pins
-#define enA 9
+#define enA 3
 #define in1 8
 #define in2 7
 #define enB 6
