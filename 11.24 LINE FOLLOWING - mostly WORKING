@@ -4,7 +4,7 @@
 #define IR_MIDDLE 2
 #define IR_RIGHT A0
 // -------------------- Motor Pins --------------------
-#define enA 9
+#define enA 3
 #define in1 8
 #define in2 7
 #define enB 6
