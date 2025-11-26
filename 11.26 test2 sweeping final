@@ -14,7 +14,7 @@ int sweepDelay = 25;
 #define ECHO_PIN_SIDE 13  // Side sensor
 
 // -------------------- Motor Pins --------------------
-#define enA 9
+#define enA 3
 #define in1 8
 #define in2 7
 #define enB 6
