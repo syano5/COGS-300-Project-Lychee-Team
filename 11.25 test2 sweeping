@@ -1,4 +1,5 @@
 #include <Servo.h>
+#define SERVO_PIN A1
 
 // -------------------- Servo Setup --------------------
 Servo servo_9;
@@ -40,7 +41,7 @@ int objectAngle = 90;
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(9600);
-  servo_9.attach(3, 500, 2500);
+  servo_9.attach(SERVO_PIN, 500, 2500);
 
   pinMode(enA, OUTPUT);
   pinMode(in1, OUTPUT);
@@ -245,3 +246,4 @@ void loop() {
     case PAUSE:  pauseThenSweep(); break;
   }
 }
+
