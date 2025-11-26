@@ -1,0 +1,129 @@
+// -------------------- Ultrasonic Pins --------------------
+#define TRIG_PIN 10
+#define ECHO_PIN 11
+
+// -------------------- Motor Pins --------------------
+#define enA 3
+#define in1 8
+#define in2 7
+#define enB 6
+#define in3 5
+#define in4 4
+
+// -------------------- Variables --------------------
+int rightMotorSpeed = 80;  // Motor A - Right wheel
+int leftMotorSpeed = 80;   // Motor B - Left wheel
+
+// -------------------- Sweep Variables --------------------
+int pos = 0;
+int increment = 3;
+const float DETECTION_RANGE = 150.0; // cm (~5 ft)
+
+// -------------------- State Variables --------------------
+bool objectFound = false;
+int objectAngle = 90;
+unsigned long lastSweepTime = 0;
+int sweepInterval = 25;  // milliseconds between sweep steps
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Motor pins setup
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  
+  // Ultrasonic pins setup
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  Serial.println("Sweep While Driving System Ready!");
+  delay(2000);  // 2 second delay before starting
+  
+  // Start driving immediately
+  driveForward();
+}
+
+void loop() {
+  // Keep motors running
+  driveForward();
+  
+  // Non-blocking sweep
+  if (millis() - lastSweepTime >= sweepInterval) {
+    lastSweepTime = millis();
+    sweepAndDetect();
+  }
+}
+
+// -------------------- Distance Measurement --------------------
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duration == 0) return -1;
+  return duration * 0.034 / 2.0;
+}
+
+// -------------------- Servo Sweep (without servo) --------------------
+void sweepAndDetect() {
+  static int direction = 1;
+  
+  // Simulate servo position (you would write to servo here if attached)
+  // servo_9.write(pos);
+  
+  float distance = getDistance();
+  
+  if (distance > 0) {
+    Serial.print("Angle ");
+    Serial.print(pos);
+    Serial.print(" | Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+  }
+
+  // Object detection
+  if (distance > 0 && distance <= DETECTION_RANGE) {
+    Serial.print(">>> Object detected at ");
+    Serial.print(distance);
+    Serial.print(" cm | angle ");
+    Serial.println(pos);
+    objectFound = true;
+    objectAngle = pos;
+    // Continue driving - don't stop
+  }
+
+  // Sweep logic
+  pos += direction * increment;
+  if (pos >= 180 || pos <= 0) {
+    direction = -direction;
+  }
+}
+
+// -------------------- Motor Control --------------------
+void driveForward() {
+  // Right motor (Motor A)
+  digitalWrite(in1, HIGH);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, rightMotorSpeed);
+  
+  // Left motor (Motor B)
+  digitalWrite(in3, HIGH);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, leftMotorSpeed);
+}
+
+void stopMotors() {
+  digitalWrite(in1, LOW);
+  digitalWrite(in2, LOW);
+  analogWrite(enA, 0);
+  
+  digitalWrite(in3, LOW);
+  digitalWrite(in4, LOW);
+  analogWrite(enB, 0);
+}
